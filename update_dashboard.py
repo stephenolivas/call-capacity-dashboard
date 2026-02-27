@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """
-Call Capacity Dashboard Generator
+Call Capacity Dashboard Generator (Optimized v2)
 Fetches first strategy call bookings from Close CRM for a 10-day rolling window,
 applies exclusion rules, and generates a self-contained HTML dashboard.
+
+Performance: Uses concurrent API calls and batched operations to run under 3 minutes.
 """
 
 import os
 import sys
 import json
 import re
+import time
 from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 
 # ─── Configuration ───────────────────────────────────────────────────────────
@@ -46,32 +50,43 @@ EXCLUDED_TITLE_RE = re.compile("|".join(EXCLUDED_TITLE_PATTERNS), re.IGNORECASE)
 FIELD_FIRST_CALL_BOOKED_DATE = "custom.cf_JsJZIVh7QDcFQBXr4cTRBxf1AkREpLdsKiZB4AEJ8Xh"
 FIELD_FUNNEL_NAME_DEAL = "custom.cf_xqDQE8fkPsWa0RNEve7hcaxKblCe6489XeZGRDzyPdX"
 
-# Existing-customer cutoff: completed meetings before this date = existing customer
+# Existing-customer cutoff
 EXISTING_CUSTOMER_CUTOFF = "2026-01-01"
 
 OUTPUT_FILE = os.environ.get("OUTPUT_FILE", "index.html")
 
+# Concurrency settings (Close API allows bursts; 6 workers keeps us safe)
+MAX_WORKERS = 6
+
 
 # ─── API Helpers ─────────────────────────────────────────────────────────────
 
+session = requests.Session()
+session.auth = (CLOSE_API_KEY, "")
+session.headers.update({"Content-Type": "application/json"})
+
+
 def close_get(endpoint, params=None):
-    """Make an authenticated GET request to the Close API."""
+    """GET with automatic retry on rate limit (429)."""
     url = f"{CLOSE_API_BASE}/{endpoint}"
-    resp = requests.get(url, auth=(CLOSE_API_KEY, ""), params=params or {}, timeout=30)
+    for attempt in range(3):
+        resp = session.get(url, params=params or {}, timeout=30)
+        if resp.status_code == 429:
+            wait = float(resp.headers.get("Retry-After", 2))
+            print(f"   ⏳ Rate limited, waiting {wait}s...", file=sys.stderr)
+            time.sleep(wait)
+            continue
+        resp.raise_for_status()
+        return resp.json()
     resp.raise_for_status()
-    return resp.json()
 
 
 def fetch_meetings_in_range(start_date, end_date):
-    """
-    Fetch all meetings from Close whose start time falls within [start_date, end_date).
-    Uses the activity/meeting endpoint with date filtering and pagination.
-    """
+    """Fetch all meetings in [start_date, end_date) with pagination."""
     all_meetings = []
     skip = 0
     limit = 100
 
-    # Convert dates to ISO datetime strings in UTC
     start_iso = datetime.combine(start_date, datetime.min.time(), tzinfo=PACIFIC).astimezone(UTC).isoformat()
     end_iso = datetime.combine(end_date, datetime.min.time(), tzinfo=PACIFIC).astimezone(UTC).isoformat()
 
@@ -85,7 +100,6 @@ def fetch_meetings_in_range(start_date, end_date):
         data = close_get("activity/meeting", params)
         meetings = data.get("data", [])
         all_meetings.extend(meetings)
-
         if not data.get("has_more", False):
             break
         skip += limit
@@ -93,52 +107,94 @@ def fetch_meetings_in_range(start_date, end_date):
     return all_meetings
 
 
-def fetch_lead(lead_id, cache):
-    """Fetch a lead by ID, using a cache to avoid redundant calls."""
-    if lead_id in cache:
-        return cache[lead_id]
+def fetch_lead(lead_id):
+    """Fetch a single lead by ID."""
     try:
-        lead = close_get(f"lead/{lead_id}")
-        cache[lead_id] = lead
+        return close_get(f"lead/{lead_id}")
     except requests.HTTPError as e:
         print(f"  ⚠ Could not fetch lead {lead_id}: {e}", file=sys.stderr)
-        cache[lead_id] = None
-    return cache[lead_id]
+        return None
 
 
-def lead_has_completed_meetings_before(lead_id, cutoff_iso):
-    """
-    Check if a lead has any completed meetings before the cutoff date.
-    Returns True if the lead is an existing customer.
-    """
-    params = {
-        "lead_id": lead_id,
-        "_limit": 1,
-        "status": "completed",
-        "date_start__lt": cutoff_iso,
-    }
+def fetch_leads_concurrent(lead_ids):
+    """Fetch multiple leads concurrently using a thread pool."""
+    lead_cache = {}
+    lead_ids_list = list(lead_ids)
+    print(f"   Fetching {len(lead_ids_list)} leads ({MAX_WORKERS} concurrent)...")
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        future_to_id = {executor.submit(fetch_lead, lid): lid for lid in lead_ids_list}
+        done_count = 0
+        for future in as_completed(future_to_id):
+            lid = future_to_id[future]
+            done_count += 1
+            if done_count % 25 == 0:
+                print(f"   ... {done_count}/{len(lead_ids_list)} leads fetched")
+            try:
+                lead_cache[lid] = future.result()
+            except Exception as e:
+                print(f"  ⚠ Error fetching {lid}: {e}", file=sys.stderr)
+                lead_cache[lid] = None
+
+    print(f"   ✓ All {len(lead_ids_list)} leads fetched")
+    return lead_cache
+
+
+def check_existing_customer(lead_id, cutoff_iso):
+    """Check if a lead has completed meetings before the cutoff."""
     try:
+        params = {
+            "lead_id": lead_id,
+            "_limit": 1,
+            "status": "completed",
+            "date_start__lt": cutoff_iso,
+        }
         data = close_get("activity/meeting", params)
-        return len(data.get("data", [])) > 0
+        return lead_id, len(data.get("data", [])) > 0
     except requests.HTTPError:
-        return False
+        return lead_id, False
+
+
+def check_existing_customers_concurrent(lead_ids, cutoff_iso):
+    """Check multiple leads for existing-customer status concurrently."""
+    results = {}
+    lead_ids_list = list(lead_ids)
+    print(f"   Checking {len(lead_ids_list)} leads for existing-customer status...")
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {
+            executor.submit(check_existing_customer, lid, cutoff_iso): lid
+            for lid in lead_ids_list
+        }
+        done_count = 0
+        for future in as_completed(futures):
+            done_count += 1
+            if done_count % 25 == 0:
+                print(f"   ... {done_count}/{len(lead_ids_list)} checked")
+            try:
+                lid, is_existing = future.result()
+                results[lid] = is_existing
+            except Exception as e:
+                lid = futures[future]
+                print(f"  ⚠ Error checking {lid}: {e}", file=sys.stderr)
+                results[lid] = False
+
+    existing_count = sum(1 for v in results.values() if v)
+    print(f"   ✓ Done. {existing_count} existing customers found")
+    return results
 
 
 # ─── Exclusion Logic ─────────────────────────────────────────────────────────
 
 def is_excluded_by_title(title):
-    """Check if meeting title matches any exclusion pattern."""
     if not title:
         return False
     return bool(EXCLUDED_TITLE_RE.search(title))
 
 
 def is_excluded_by_user(user_id, users_list):
-    """Check if the meeting is assigned to an excluded user."""
-    # Check primary user_id
     if user_id in EXCLUDED_USER_IDS:
         return True
-    # Also check the users list (attendees)
     if users_list:
         for uid in users_list:
             if uid in EXCLUDED_USER_IDS:
@@ -147,7 +203,6 @@ def is_excluded_by_user(user_id, users_list):
 
 
 def get_meeting_date_pacific(meeting):
-    """Extract the meeting's date in Pacific time."""
     starts_at = meeting.get("starts_at") or meeting.get("activity_at") or meeting.get("date_start")
     if not starts_at:
         return None
@@ -159,11 +214,6 @@ def get_meeting_date_pacific(meeting):
 
 
 def is_reschedule(lead_data, meeting_date):
-    """
-    Exclude if the lead's First Call Booked Date is before the meeting date.
-    This means the first call was originally booked for an earlier date,
-    making this meeting a reschedule.
-    """
     fcbd_raw = lead_data.get(FIELD_FIRST_CALL_BOOKED_DATE)
     if not fcbd_raw:
         return False
@@ -177,90 +227,74 @@ def is_reschedule(lead_data, meeting_date):
 # ─── Main Pipeline ───────────────────────────────────────────────────────────
 
 def run_pipeline():
-    """Execute the full data pipeline and return structured dashboard data."""
     today = datetime.now(PACIFIC).date()
     end_date = today + timedelta(days=10)
-
     print(f"📅 Date range: {today} to {end_date} (Pacific)")
 
-    # Step 1: Fetch all meetings in the 10-day window
+    # Step 1: Fetch all meetings
     print("📥 Fetching meetings from Close CRM...")
     raw_meetings = fetch_meetings_in_range(today, end_date)
     print(f"   Found {len(raw_meetings)} total meetings")
 
-    # Step 2: Apply title exclusions
+    # Step 2: Apply all fast local exclusions first (no API calls)
     meetings = []
     for m in raw_meetings:
         title = m.get("title", "")
+        status = m.get("status", "")
+
         if is_excluded_by_title(title):
             continue
-        meetings.append(m)
-    print(f"   After title exclusions: {len(meetings)}")
-
-    # Step 3: Apply user exclusions (Kristin/Spencer setter calls)
-    filtered = []
-    for m in meetings:
         if is_excluded_by_user(m.get("user_id", ""), m.get("users", [])):
             continue
-        filtered.append(m)
-    meetings = filtered
-    print(f"   After user exclusions: {len(meetings)}")
-
-    # Step 4: Exclude canceled/declined meetings
-    filtered = []
-    for m in meetings:
-        status = m.get("status", "")
         if status in ("canceled", "declined-by-org", "declined-by-lead"):
             continue
-        filtered.append(m)
-    meetings = filtered
-    print(f"   After status exclusions: {len(meetings)}")
-
-    # Step 5: Fetch lead data and apply lead-level exclusions
-    lead_cache = {}
-    cutoff_iso = datetime.combine(
-        date.fromisoformat(EXISTING_CUSTOMER_CUTOFF),
-        datetime.min.time(),
-        tzinfo=UTC
-    ).isoformat()
-
-    # Pre-fetch unique leads
-    unique_lead_ids = set(m.get("lead_id") for m in meetings if m.get("lead_id"))
-    print(f"   Fetching data for {len(unique_lead_ids)} unique leads...")
-
-    # Cache to track existing-customer status per lead
-    existing_customer_cache = {}
-
-    valid_meetings = []
-    for m in meetings:
-        lead_id = m.get("lead_id")
-        if not lead_id:
+        if not m.get("lead_id"):
             continue
 
         meeting_date = get_meeting_date_pacific(m)
         if not meeting_date:
             continue
 
-        # Fetch lead
-        lead_data = fetch_lead(lead_id, lead_cache)
+        m["_meeting_date"] = meeting_date
+        meetings.append(m)
+
+    print(f"   After local exclusions: {len(meetings)}")
+
+    # Step 3: Fetch all unique leads concurrently
+    unique_lead_ids = set(m["lead_id"] for m in meetings)
+    lead_cache = fetch_leads_concurrent(unique_lead_ids)
+
+    # Step 4: Apply reschedule exclusion (uses cached lead data, no API calls)
+    pre = len(meetings)
+    meetings = [
+        m for m in meetings
+        if lead_cache.get(m["lead_id"]) and not is_reschedule(lead_cache[m["lead_id"]], m["_meeting_date"])
+    ]
+    print(f"   After reschedule exclusion: {len(meetings)} (removed {pre - len(meetings)})")
+
+    # Step 5: Check existing-customer status concurrently
+    remaining_lead_ids = set(m["lead_id"] for m in meetings)
+    cutoff_iso = datetime.combine(
+        date.fromisoformat(EXISTING_CUSTOMER_CUTOFF),
+        datetime.min.time(),
+        tzinfo=UTC
+    ).isoformat()
+    existing_map = check_existing_customers_concurrent(remaining_lead_ids, cutoff_iso)
+
+    # Step 6: Build final valid meetings list
+    valid_meetings = []
+    for m in meetings:
+        lead_id = m["lead_id"]
+        if existing_map.get(lead_id, False):
+            continue
+
+        lead_data = lead_cache.get(lead_id)
         if not lead_data:
             continue
 
-        # Exclusion: reschedule check (FCBD predates meeting date)
-        if is_reschedule(lead_data, meeting_date):
-            continue
-
-        # Exclusion: existing customer (completed meetings before 2026)
-        if lead_id not in existing_customer_cache:
-            existing_customer_cache[lead_id] = lead_has_completed_meetings_before(lead_id, cutoff_iso)
-        if existing_customer_cache[lead_id]:
-            continue
-
-        # Get funnel name
         funnel = lead_data.get(FIELD_FUNNEL_NAME_DEAL) or "Unknown"
-
         valid_meetings.append({
-            "date": meeting_date,
+            "date": m["_meeting_date"],
             "title": m.get("title", ""),
             "lead_id": lead_id,
             "lead_name": lead_data.get("display_name") or lead_data.get("name", "Unknown"),
@@ -270,7 +304,7 @@ def run_pipeline():
 
     print(f"   ✅ Valid first meetings: {len(valid_meetings)}")
 
-    # Step 6: Build daily aggregations
+    # Step 7: Build daily aggregations
     dates = [today + timedelta(days=i) for i in range(10)]
     daily_data = {}
     funnel_set = set()
@@ -303,14 +337,11 @@ def run_pipeline():
 # ─── HTML Generation ────────────────────────────────────────────────────────
 
 def generate_html(data):
-    """Generate a self-contained HTML dashboard from pipeline data."""
     dates = data["dates"]
     daily = data["daily_data"]
     funnels = data["funnels"]
     last_updated = data["last_updated"]
-    last_updated_iso = data["last_updated_iso"]
 
-    # Prepare chart data
     labels_json = json.dumps([d.strftime("%a %m/%d") for d in dates])
     booked_json = json.dumps([daily[d]["booked"] for d in dates])
     capacity_json = json.dumps([daily[d]["capacity"] for d in dates])
@@ -321,7 +352,6 @@ def generate_html(data):
         util_pcts.append(round(bk / cap * 100, 1) if cap > 0 else 0)
     util_json = json.dumps(util_pcts)
 
-    # Build funnel breakdown table rows
     funnel_rows_html = ""
     for funnel in funnels:
         cells = ""
@@ -338,7 +368,6 @@ def generate_html(data):
             <td class="cell-total">{row_total}</td>
         </tr>"""
 
-    # Totals row
     totals_cells = ""
     grand_total = 0
     for d in dates:
@@ -352,7 +381,6 @@ def generate_html(data):
         <td class="cell-total">{grand_total}</td>
     </tr>"""
 
-    # Capacity row
     cap_cells = ""
     for d in dates:
         cap_cells += f'<td class="cell-cap">{daily[d]["capacity"]}</td>'
@@ -363,7 +391,6 @@ def generate_html(data):
         <td class="cell-cap">—</td>
     </tr>"""
 
-    # Utilization row
     util_cells = ""
     for d in dates:
         cap = daily[d]["capacity"]
@@ -378,7 +405,6 @@ def generate_html(data):
         <td class="cell-cap">—</td>
     </tr>"""
 
-    # Date headers for table
     date_headers = ""
     for d in dates:
         day_label = d.strftime("%a<br>%m/%d")
@@ -424,7 +450,6 @@ def generate_html(data):
     margin: 0 auto;
   }}
 
-  /* ── Header ── */
   .header {{
     display: flex;
     justify-content: space-between;
@@ -465,7 +490,6 @@ def generate_html(data):
     50% {{ opacity: 0.3; }}
   }}
 
-  /* ── Summary Cards ── */
   .summary-row {{
     display: grid;
     grid-template-columns: repeat(4, 1fr);
@@ -495,7 +519,6 @@ def generate_html(data):
   .card .value.red   {{ color: var(--red); }}
   .card .value.cyan  {{ color: var(--cyan); }}
 
-  /* ── Chart ── */
   .chart-container {{
     background: var(--surface);
     border: 1px solid var(--border);
@@ -514,7 +537,6 @@ def generate_html(data):
     height: 320px;
   }}
 
-  /* ── Table ── */
   .table-container {{
     background: var(--surface);
     border: 1px solid var(--border);
@@ -562,32 +584,17 @@ def generate_html(data):
     text-overflow: ellipsis;
     max-width: 200px;
   }}
-  .cell-zero {{
-    color: var(--text-dim);
-    opacity: 0.4;
-  }}
-  .cell-active {{
-    color: var(--accent-light);
-    font-weight: 500;
-  }}
-  .cell-total {{
-    font-weight: 700;
-    color: var(--text);
-  }}
-  .cell-cap {{
-    color: var(--text-dim);
-  }}
+  .cell-zero {{ color: var(--text-dim); opacity: 0.4; }}
+  .cell-active {{ color: var(--accent-light); font-weight: 500; }}
+  .cell-total {{ font-weight: 700; color: var(--text); }}
+  .cell-cap {{ color: var(--text-dim); }}
   .totals-row td {{
     border-top: 2px solid var(--accent);
     border-bottom: 1px solid var(--border);
     background: rgba(99, 102, 241, 0.06);
   }}
-  .cap-row td {{
-    color: var(--text-dim);
-  }}
-  .util-row td {{
-    font-weight: 700;
-  }}
+  .cap-row td {{ color: var(--text-dim); }}
+  .util-row td {{ font-weight: 700; }}
   .util-low  {{ color: var(--green); }}
   .util-mid  {{ color: var(--amber); }}
   .util-high {{ color: var(--red); }}
@@ -602,7 +609,6 @@ def generate_html(data):
 <body>
 <div class="dashboard">
 
-  <!-- Header -->
   <div class="header">
     <div>
       <h1>Call Capacity Dashboard</h1>
@@ -614,10 +620,8 @@ def generate_html(data):
     </div>
   </div>
 
-  <!-- Summary Cards -->
   <div class="summary-row" id="summaryCards"></div>
 
-  <!-- Chart -->
   <div class="chart-container">
     <h2>Daily Bookings vs. Capacity</h2>
     <div class="chart-wrap">
@@ -625,7 +629,6 @@ def generate_html(data):
     </div>
   </div>
 
-  <!-- Funnel Breakdown Table -->
   <div class="table-container">
     <h2>Funnel Breakdown</h2>
     <table>
@@ -653,7 +656,6 @@ const booked   = {booked_json};
 const capacity = {capacity_json};
 const util     = {util_json};
 
-// Summary cards
 const totalBooked   = booked.reduce((a,b) => a+b, 0);
 const totalCapacity = capacity.reduce((a,b) => a+b, 0);
 const avgUtil       = totalCapacity > 0 ? (totalBooked / totalCapacity * 100).toFixed(1) : 0;
@@ -675,7 +677,6 @@ cards.forEach(c => {{
     </div>`;
 }});
 
-// Chart
 const ctx = document.getElementById('capacityChart').getContext('2d');
 new Chart(ctx, {{
   type: 'bar',
@@ -752,6 +753,7 @@ def main():
         print("❌ Error: CLOSE_API_KEY environment variable is not set.", file=sys.stderr)
         sys.exit(1)
 
+    start_time = time.time()
     print("🚀 Starting Call Capacity Dashboard update...")
     data = run_pipeline()
     html = generate_html(data)
@@ -759,8 +761,10 @@ def main():
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write(html)
 
+    elapsed = time.time() - start_time
     print(f"✅ Dashboard written to {OUTPUT_FILE}")
     print(f"   {len(data['valid_meetings'])} first meetings across {len(data['funnels'])} funnels")
+    print(f"   ⏱ Completed in {elapsed:.1f}s")
 
 
 if __name__ == "__main__":
