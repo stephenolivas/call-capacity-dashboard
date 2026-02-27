@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Call Capacity Dashboard Generator (Optimized v2)
+Call Capacity Dashboard Generator (v3)
 Fetches first strategy call bookings from Close CRM for a 10-day rolling window,
 applies exclusion rules, and generates a self-contained HTML dashboard.
 
-Performance: Uses concurrent API calls and batched operations to run under 3 minutes.
+Performance: Uses 2 concurrent workers with 0.35s throttle to stay under Close rate limits.
 """
 
 import os
@@ -55,8 +55,8 @@ EXISTING_CUSTOMER_CUTOFF = "2026-01-01"
 
 OUTPUT_FILE = os.environ.get("OUTPUT_FILE", "index.html")
 
-# Concurrency settings (Close API allows bursts; 6 workers keeps us safe)
-MAX_WORKERS = 6
+# Concurrency: 2 workers + 0.35s throttle = ~1.4 req/s, safely under Close rate limits
+MAX_WORKERS = 2
 
 
 # ─── API Helpers ─────────────────────────────────────────────────────────────
@@ -67,7 +67,8 @@ session.headers.update({"Content-Type": "application/json"})
 
 
 def close_get(endpoint, params=None):
-    """GET with automatic retry on rate limit (429)."""
+    """GET with throttle and automatic retry on rate limit (429)."""
+    time.sleep(0.35)
     url = f"{CLOSE_API_BASE}/{endpoint}"
     for attempt in range(3):
         resp = session.get(url, params=params or {}, timeout=30)
