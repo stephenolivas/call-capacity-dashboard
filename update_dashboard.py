@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Call Capacity Dashboard Generator (v3)
+Call Capacity Dashboard Generator (v4 — Sequential)
 Fetches first strategy call bookings from Close CRM for a 10-day rolling window,
 applies exclusion rules, and generates a self-contained HTML dashboard.
 
-Performance: Uses 2 concurrent workers with 0.35s throttle to stay under Close rate limits.
+All API calls are sequential with a 0.3s global throttle to stay safely under
+Close's rate limits. No threading. Typical runtime: 4-8 minutes.
 """
 
 import os
@@ -14,7 +15,6 @@ import re
 import time
 from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 
 # ─── Configuration ───────────────────────────────────────────────────────────
@@ -24,16 +24,13 @@ CLOSE_API_BASE = "https://api.close.com/api/v1"
 PACIFIC = ZoneInfo("America/Los_Angeles")
 UTC = ZoneInfo("UTC")
 
-# Capacity per day-of-week (Mon=0 ... Sun=6)
 CAPACITY = {0: 44, 1: 47, 2: 47, 3: 47, 4: 47, 5: 4, 6: 0}
 
-# User IDs to exclude (setter/confirmation calls)
 EXCLUDED_USER_IDS = {
     "user_EmhqCmaHERTfgfWnPADiLGEqQw3ENvRYd3u1VEmblIp",  # Kristin Nelson
     "user_4sfuKGMbv0LQZ4hpS8ipASv406kKTSNP5Xx79jOwSqM",  # Spencer Reynolds
 }
 
-# Title patterns to exclude (case-insensitive)
 EXCLUDED_TITLE_PATTERNS = [
     r"\bfollow\b",
     r"\bf/u\b",
@@ -46,18 +43,14 @@ EXCLUDED_TITLE_PATTERNS = [
 ]
 EXCLUDED_TITLE_RE = re.compile("|".join(EXCLUDED_TITLE_PATTERNS), re.IGNORECASE)
 
-# Close CRM custom field keys
 FIELD_FIRST_CALL_BOOKED_DATE = "custom.cf_JsJZIVh7QDcFQBXr4cTRBxf1AkREpLdsKiZB4AEJ8Xh"
 FIELD_FUNNEL_NAME_DEAL = "custom.cf_xqDQE8fkPsWa0RNEve7hcaxKblCe6489XeZGRDzyPdX"
 
-# Existing-customer cutoff
 EXISTING_CUSTOMER_CUTOFF = "2026-01-01"
-
 OUTPUT_FILE = os.environ.get("OUTPUT_FILE", "index.html")
 
-# Concurrency: 2 workers + 0.35s throttle = ~1.4 req/s, safely under Close rate limits
-MAX_WORKERS = 2
-
+# Global throttle between every API call (seconds)
+API_THROTTLE = 0.3
 
 # ─── API Helpers ─────────────────────────────────────────────────────────────
 
@@ -65,22 +58,28 @@ session = requests.Session()
 session.auth = (CLOSE_API_KEY, "")
 session.headers.update({"Content-Type": "application/json"})
 
+_api_call_count = 0
+
 
 def close_get(endpoint, params=None):
-    """GET with throttle and automatic retry on rate limit (429)."""
-    time.sleep(0.35)
+    """Sequential GET with global throttle and retry on 429."""
+    global _api_call_count
+    time.sleep(API_THROTTLE)
     url = f"{CLOSE_API_BASE}/{endpoint}"
-    for attempt in range(3):
+    for attempt in range(5):
         resp = session.get(url, params=params or {}, timeout=30)
+        _api_call_count += 1
         if resp.status_code == 429:
-            wait = float(resp.headers.get("Retry-After", 2))
-            print(f"   ⏳ Rate limited, waiting {wait}s...", file=sys.stderr)
+            wait = float(resp.headers.get("Retry-After", 3))
+            print(f"   ⏳ Rate limited (attempt {attempt+1}), waiting {wait}s...")
             time.sleep(wait)
             continue
         resp.raise_for_status()
         return resp.json()
     resp.raise_for_status()
 
+
+# ─── Data Fetching ───────────────────────────────────────────────────────────
 
 def fetch_meetings_in_range(start_date, end_date):
     """Fetch all meetings in [start_date, end_date) with pagination."""
@@ -92,13 +91,12 @@ def fetch_meetings_in_range(start_date, end_date):
     end_iso = datetime.combine(end_date, datetime.min.time(), tzinfo=PACIFIC).astimezone(UTC).isoformat()
 
     while True:
-        params = {
+        data = close_get("activity/meeting", {
             "_skip": skip,
             "_limit": limit,
             "date_start__gte": start_iso,
             "date_start__lt": end_iso,
-        }
-        data = close_get("activity/meeting", params)
+        })
         meetings = data.get("data", [])
         all_meetings.extend(meetings)
         if not data.get("has_more", False):
@@ -108,81 +106,50 @@ def fetch_meetings_in_range(start_date, end_date):
     return all_meetings
 
 
-def fetch_lead(lead_id):
-    """Fetch a single lead by ID."""
-    try:
-        return close_get(f"lead/{lead_id}")
-    except requests.HTTPError as e:
-        print(f"  ⚠ Could not fetch lead {lead_id}: {e}", file=sys.stderr)
-        return None
+def fetch_leads_sequential(lead_ids):
+    """Fetch leads one at a time. Reliable, no rate limit issues."""
+    cache = {}
+    total = len(lead_ids)
+    for i, lid in enumerate(lead_ids, 1):
+        if i % 20 == 0 or i == total:
+            print(f"   ... {i}/{total} leads fetched")
+        try:
+            cache[lid] = close_get(f"lead/{lid}")
+        except requests.HTTPError as e:
+            print(f"  ⚠ Could not fetch lead {lid}: {e}", file=sys.stderr)
+            cache[lid] = None
+    return cache
 
 
-def fetch_leads_concurrent(lead_ids):
-    """Fetch multiple leads concurrently using a thread pool."""
-    lead_cache = {}
-    lead_ids_list = list(lead_ids)
-    print(f"   Fetching {len(lead_ids_list)} leads ({MAX_WORKERS} concurrent)...")
+def build_existing_customer_set(lead_ids):
+    """
+    Check which leads are existing customers by looking for completed
+    meetings before the cutoff date. Done sequentially, one lead at a time.
+    """
+    cutoff_iso = datetime.combine(
+        date.fromisoformat(EXISTING_CUSTOMER_CUTOFF),
+        datetime.min.time(),
+        tzinfo=UTC
+    ).isoformat()
 
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        future_to_id = {executor.submit(fetch_lead, lid): lid for lid in lead_ids_list}
-        done_count = 0
-        for future in as_completed(future_to_id):
-            lid = future_to_id[future]
-            done_count += 1
-            if done_count % 25 == 0:
-                print(f"   ... {done_count}/{len(lead_ids_list)} leads fetched")
-            try:
-                lead_cache[lid] = future.result()
-            except Exception as e:
-                print(f"  ⚠ Error fetching {lid}: {e}", file=sys.stderr)
-                lead_cache[lid] = None
+    existing = set()
+    total = len(lead_ids)
+    for i, lid in enumerate(lead_ids, 1):
+        if i % 20 == 0 or i == total:
+            print(f"   ... {i}/{total} leads checked")
+        try:
+            data = close_get("activity/meeting", {
+                "lead_id": lid,
+                "_limit": 1,
+                "status": "completed",
+                "date_start__lt": cutoff_iso,
+            })
+            if len(data.get("data", [])) > 0:
+                existing.add(lid)
+        except requests.HTTPError:
+            pass
 
-    print(f"   ✓ All {len(lead_ids_list)} leads fetched")
-    return lead_cache
-
-
-def check_existing_customer(lead_id, cutoff_iso):
-    """Check if a lead has completed meetings before the cutoff."""
-    try:
-        params = {
-            "lead_id": lead_id,
-            "_limit": 1,
-            "status": "completed",
-            "date_start__lt": cutoff_iso,
-        }
-        data = close_get("activity/meeting", params)
-        return lead_id, len(data.get("data", [])) > 0
-    except requests.HTTPError:
-        return lead_id, False
-
-
-def check_existing_customers_concurrent(lead_ids, cutoff_iso):
-    """Check multiple leads for existing-customer status concurrently."""
-    results = {}
-    lead_ids_list = list(lead_ids)
-    print(f"   Checking {len(lead_ids_list)} leads for existing-customer status...")
-
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {
-            executor.submit(check_existing_customer, lid, cutoff_iso): lid
-            for lid in lead_ids_list
-        }
-        done_count = 0
-        for future in as_completed(futures):
-            done_count += 1
-            if done_count % 25 == 0:
-                print(f"   ... {done_count}/{len(lead_ids_list)} checked")
-            try:
-                lid, is_existing = future.result()
-                results[lid] = is_existing
-            except Exception as e:
-                lid = futures[future]
-                print(f"  ⚠ Error checking {lid}: {e}", file=sys.stderr)
-                results[lid] = False
-
-    existing_count = sum(1 for v in results.values() if v)
-    print(f"   ✓ Done. {existing_count} existing customers found")
-    return results
+    return existing
 
 
 # ─── Exclusion Logic ─────────────────────────────────────────────────────────
@@ -205,12 +172,9 @@ def is_excluded_by_user(user_id, users_list):
 
 def get_meeting_date_pacific(meeting):
     starts_at = meeting.get("starts_at") or meeting.get("activity_at") or meeting.get("date_start")
-    if not starts_at:
+    if not starts_at or not isinstance(starts_at, str):
         return None
-    if isinstance(starts_at, str):
-        dt = datetime.fromisoformat(starts_at.replace("Z", "+00:00"))
-    else:
-        return None
+    dt = datetime.fromisoformat(starts_at.replace("Z", "+00:00"))
     return dt.astimezone(PACIFIC).date()
 
 
@@ -228,16 +192,20 @@ def is_reschedule(lead_data, meeting_date):
 # ─── Main Pipeline ───────────────────────────────────────────────────────────
 
 def run_pipeline():
+    global _api_call_count
+    _api_call_count = 0
+
     today = datetime.now(PACIFIC).date()
     end_date = today + timedelta(days=10)
     print(f"📅 Date range: {today} to {end_date} (Pacific)")
 
     # Step 1: Fetch all meetings
-    print("📥 Fetching meetings from Close CRM...")
+    print("📥 Step 1/6: Fetching meetings...")
     raw_meetings = fetch_meetings_in_range(today, end_date)
     print(f"   Found {len(raw_meetings)} total meetings")
 
-    # Step 2: Apply all fast local exclusions first (no API calls)
+    # Step 2: Apply all local exclusions (no API calls)
+    print("🔍 Step 2/6: Applying local exclusions...")
     meetings = []
     for m in raw_meetings:
         title = m.get("title", "")
@@ -251,7 +219,6 @@ def run_pipeline():
             continue
         if not m.get("lead_id"):
             continue
-
         meeting_date = get_meeting_date_pacific(m)
         if not meeting_date:
             continue
@@ -259,36 +226,35 @@ def run_pipeline():
         m["_meeting_date"] = meeting_date
         meetings.append(m)
 
-    print(f"   After local exclusions: {len(meetings)}")
+    print(f"   {len(raw_meetings)} → {len(meetings)} after local exclusions")
 
-    # Step 3: Fetch all unique leads concurrently
-    unique_lead_ids = set(m["lead_id"] for m in meetings)
-    lead_cache = fetch_leads_concurrent(unique_lead_ids)
+    # Step 3: Fetch unique leads sequentially
+    unique_lead_ids = list(set(m["lead_id"] for m in meetings))
+    print(f"📥 Step 3/6: Fetching {len(unique_lead_ids)} unique leads...")
+    lead_cache = fetch_leads_sequential(unique_lead_ids)
 
-    # Step 4: Apply reschedule exclusion (uses cached lead data, no API calls)
+    # Step 4: Apply reschedule exclusion (no API calls, uses cached data)
+    print("🔍 Step 4/6: Applying reschedule exclusion...")
     pre = len(meetings)
     meetings = [
         m for m in meetings
         if lead_cache.get(m["lead_id"]) and not is_reschedule(lead_cache[m["lead_id"]], m["_meeting_date"])
     ]
-    print(f"   After reschedule exclusion: {len(meetings)} (removed {pre - len(meetings)})")
+    print(f"   {pre} → {len(meetings)} (removed {pre - len(meetings)} reschedules)")
 
-    # Step 5: Check existing-customer status concurrently
-    remaining_lead_ids = set(m["lead_id"] for m in meetings)
-    cutoff_iso = datetime.combine(
-        date.fromisoformat(EXISTING_CUSTOMER_CUTOFF),
-        datetime.min.time(),
-        tzinfo=UTC
-    ).isoformat()
-    existing_map = check_existing_customers_concurrent(remaining_lead_ids, cutoff_iso)
+    # Step 5: Check existing-customer status sequentially
+    remaining_lead_ids = list(set(m["lead_id"] for m in meetings))
+    print(f"📥 Step 5/6: Checking {len(remaining_lead_ids)} leads for existing-customer status...")
+    existing_customers = build_existing_customer_set(remaining_lead_ids)
+    print(f"   Found {len(existing_customers)} existing customers")
 
-    # Step 6: Build final valid meetings list
+    # Step 6: Build final results
+    print("📊 Step 6/6: Building dashboard data...")
     valid_meetings = []
     for m in meetings:
         lead_id = m["lead_id"]
-        if existing_map.get(lead_id, False):
+        if lead_id in existing_customers:
             continue
-
         lead_data = lead_cache.get(lead_id)
         if not lead_data:
             continue
@@ -300,12 +266,11 @@ def run_pipeline():
             "lead_id": lead_id,
             "lead_name": lead_data.get("display_name") or lead_data.get("name", "Unknown"),
             "funnel": funnel,
-            "user_id": m.get("user_id", ""),
         })
 
-    print(f"   ✅ Valid first meetings: {len(valid_meetings)}")
+    print(f"   ✅ {len(valid_meetings)} valid first meetings")
 
-    # Step 7: Build daily aggregations
+    # Build daily aggregations
     dates = [today + timedelta(days=i) for i in range(10)]
     daily_data = {}
     funnel_set = set()
@@ -325,13 +290,14 @@ def run_pipeline():
     funnels_sorted = sorted(funnel_set)
     now_pacific = datetime.now(PACIFIC)
 
+    print(f"   📡 Total API calls made: {_api_call_count}")
+
     return {
         "dates": dates,
         "daily_data": daily_data,
         "funnels": funnels_sorted,
         "valid_meetings": valid_meetings,
         "last_updated": now_pacific.strftime("%b %d, %Y at %I:%M %p %Z"),
-        "last_updated_iso": now_pacific.isoformat(),
     }
 
 
@@ -755,7 +721,7 @@ def main():
         sys.exit(1)
 
     start_time = time.time()
-    print("🚀 Starting Call Capacity Dashboard update...")
+    print("🚀 Starting Call Capacity Dashboard update (v4 — Sequential)...")
     data = run_pipeline()
     html = generate_html(data)
 
@@ -763,7 +729,7 @@ def main():
         f.write(html)
 
     elapsed = time.time() - start_time
-    print(f"✅ Dashboard written to {OUTPUT_FILE}")
+    print(f"\n✅ Dashboard written to {OUTPUT_FILE}")
     print(f"   {len(data['valid_meetings'])} first meetings across {len(data['funnels'])} funnels")
     print(f"   ⏱ Completed in {elapsed:.1f}s")
 
