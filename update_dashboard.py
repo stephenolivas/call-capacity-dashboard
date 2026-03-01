@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-Call Capacity Dashboard Generator (v5 — Optimized Sequential)
-Fetches first strategy call bookings from Close CRM for a 10-day rolling window,
-applies exclusion rules, and generates a self-contained HTML dashboard.
+Call Capacity Dashboard Generator (v6)
 
-Key optimization: Existing-customer check uses a single bulk query instead of
-per-lead calls, cutting total API calls roughly in half vs v4.
-
-Sequential with 0.7s throttle (~85 req/min, safely under Close's 100/min limit).
-Typical runtime: 3-6 minutes.
+Key fixes over v5:
+- All print() calls use flush=True so output appears in GitHub Actions logs
+- Lead fetches use _fields param to only download the 3 fields we need (10x smaller payloads)
+- Existing-customer check is per-lead (not bulk scan of all historical meetings)
+- 0.7s throttle = ~85 req/min, safely under Close's 100/min limit
+- Elapsed time logged at each step for debugging
 """
 
 import os
@@ -49,13 +48,29 @@ EXCLUDED_TITLE_RE = re.compile("|".join(EXCLUDED_TITLE_PATTERNS), re.IGNORECASE)
 FIELD_FIRST_CALL_BOOKED_DATE = "custom.cf_JsJZIVh7QDcFQBXr4cTRBxf1AkREpLdsKiZB4AEJ8Xh"
 FIELD_FUNNEL_NAME_DEAL = "custom.cf_xqDQE8fkPsWa0RNEve7hcaxKblCe6489XeZGRDzyPdX"
 
+# Only fetch these fields from lead objects (huge speed boost)
+LEAD_FIELDS = ",".join([
+    "id", "display_name", "name",
+    FIELD_FIRST_CALL_BOOKED_DATE,
+    FIELD_FUNNEL_NAME_DEAL,
+])
+
 EXISTING_CUSTOMER_CUTOFF = "2026-01-01"
 OUTPUT_FILE = os.environ.get("OUTPUT_FILE", "index.html")
 
-# 0.7s between calls = ~85 req/min, safely under Close's ~100/min limit
 API_THROTTLE = 0.7
 
-# ─── API Helpers ─────────────────────────────────────────────────────────────
+
+# ─── Helpers ─────────────────────────────────────────────────────────────────
+
+def log(msg):
+    """Print with immediate flush so output shows in GitHub Actions."""
+    print(msg, flush=True)
+
+
+def elapsed_since(start):
+    return f"{time.time() - start:.1f}s"
+
 
 session = requests.Session()
 session.auth = (CLOSE_API_KEY, "")
@@ -74,7 +89,7 @@ def close_get(endpoint, params=None):
         _api_call_count += 1
         if resp.status_code == 429:
             wait = float(resp.headers.get("Retry-After", 5))
-            print(f"   ⏳ Rate limited (attempt {attempt+1}), waiting {wait}s...")
+            log(f"   ⏳ Rate limited (attempt {attempt+1}), waiting {wait}s...")
             time.sleep(wait)
             continue
         resp.raise_for_status()
@@ -85,7 +100,6 @@ def close_get(endpoint, params=None):
 # ─── Data Fetching ───────────────────────────────────────────────────────────
 
 def fetch_meetings_in_range(start_date, end_date):
-    """Fetch all meetings in [start_date, end_date) with pagination."""
     all_meetings = []
     skip = 0
     limit = 100
@@ -102,6 +116,7 @@ def fetch_meetings_in_range(start_date, end_date):
         })
         meetings = data.get("data", [])
         all_meetings.extend(meetings)
+        log(f"   ... fetched {len(all_meetings)} meetings so far")
         if not data.get("has_more", False):
             break
         skip += limit
@@ -110,63 +125,32 @@ def fetch_meetings_in_range(start_date, end_date):
 
 
 def fetch_leads_sequential(lead_ids):
-    """Fetch leads one at a time with progress logging."""
+    """Fetch leads with only the fields we need (_fields param)."""
     cache = {}
     total = len(lead_ids)
     for i, lid in enumerate(lead_ids, 1):
-        if i % 20 == 0 or i == total:
-            print(f"   ... {i}/{total} leads fetched")
+        if i % 10 == 0 or i == total:
+            log(f"   ... {i}/{total} leads fetched ({_api_call_count} API calls)")
         try:
-            cache[lid] = close_get(f"lead/{lid}")
+            cache[lid] = close_get(f"lead/{lid}", {"_fields": LEAD_FIELDS})
         except requests.HTTPError as e:
-            print(f"  ⚠ Could not fetch lead {lid}: {e}", file=sys.stderr)
+            log(f"  ⚠ Could not fetch lead {lid}: {e}")
             cache[lid] = None
     return cache
 
 
-def build_existing_customer_set_bulk(candidate_lead_ids):
-    """
-    BULK approach: Fetch ALL completed meetings before the cutoff in one
-    paginated scan, then intersect with our candidate lead IDs.
-
-    This replaces ~N individual API calls with ~5-15 paginated calls,
-    regardless of how many leads we're checking.
-    """
-    cutoff_iso = datetime.combine(
-        date.fromisoformat(EXISTING_CUSTOMER_CUTOFF),
-        datetime.min.time(),
-        tzinfo=UTC
-    ).isoformat()
-
-    candidate_set = set(candidate_lead_ids)
-    existing = set()
-    skip = 0
-    limit = 100
-    total_scanned = 0
-
-    while True:
+def check_existing_customer(lead_id, cutoff_iso):
+    """Check if a single lead has completed meetings before cutoff."""
+    try:
         data = close_get("activity/meeting", {
-            "_skip": skip,
-            "_limit": limit,
+            "lead_id": lead_id,
+            "_limit": 1,
             "status": "completed",
             "date_start__lt": cutoff_iso,
         })
-        meetings = data.get("data", [])
-        total_scanned += len(meetings)
-
-        for m in meetings:
-            lid = m.get("lead_id")
-            if lid and lid in candidate_set:
-                existing.add(lid)
-
-        if total_scanned % 500 == 0 or not data.get("has_more", False):
-            print(f"   ... scanned {total_scanned} historical meetings, found {len(existing)} existing customers so far")
-
-        if not data.get("has_more", False):
-            break
-        skip += limit
-
-    return existing
+        return len(data.get("data", [])) > 0
+    except requests.HTTPError:
+        return False
 
 
 # ─── Exclusion Logic ─────────────────────────────────────────────────────────
@@ -211,23 +195,25 @@ def is_reschedule(lead_data, meeting_date):
 def run_pipeline():
     global _api_call_count
     _api_call_count = 0
+    pipeline_start = time.time()
 
     today = datetime.now(PACIFIC).date()
     end_date = today + timedelta(days=10)
-    print(f"📅 Date range: {today} to {end_date} (Pacific)")
+    log(f"📅 Date range: {today} to {end_date} (Pacific)")
 
-    # Step 1: Fetch all meetings in range
-    print("📥 Step 1/6: Fetching meetings...")
+    # Step 1: Fetch all meetings
+    step_start = time.time()
+    log("📥 Step 1/6: Fetching meetings...")
     raw_meetings = fetch_meetings_in_range(today, end_date)
-    print(f"   Found {len(raw_meetings)} total meetings")
+    log(f"   ✓ {len(raw_meetings)} meetings fetched [{elapsed_since(step_start)}]")
 
-    # Step 2: Apply all local exclusions (no API calls)
-    print("🔍 Step 2/6: Applying local exclusions...")
+    # Step 2: Local exclusions (instant, no API calls)
+    step_start = time.time()
+    log("🔍 Step 2/6: Applying local exclusions...")
     meetings = []
     for m in raw_meetings:
         title = m.get("title", "")
         status = m.get("status", "")
-
         if is_excluded_by_title(title):
             continue
         if is_excluded_by_user(m.get("user_id", ""), m.get("users", [])):
@@ -239,34 +225,48 @@ def run_pipeline():
         meeting_date = get_meeting_date_pacific(m)
         if not meeting_date:
             continue
-
         m["_meeting_date"] = meeting_date
         meetings.append(m)
+    log(f"   ✓ {len(raw_meetings)} → {len(meetings)} [{elapsed_since(step_start)}]")
 
-    print(f"   {len(raw_meetings)} → {len(meetings)} after local exclusions")
-
-    # Step 3: Fetch unique leads sequentially (the main API cost)
+    # Step 3: Fetch unique leads (main API cost, but with _fields for speed)
+    step_start = time.time()
     unique_lead_ids = list(set(m["lead_id"] for m in meetings))
-    print(f"📥 Step 3/6: Fetching {len(unique_lead_ids)} unique leads...")
+    log(f"📥 Step 3/6: Fetching {len(unique_lead_ids)} unique leads (slim _fields mode)...")
     lead_cache = fetch_leads_sequential(unique_lead_ids)
+    log(f"   ✓ All leads fetched [{elapsed_since(step_start)}]")
 
-    # Step 4: Apply reschedule exclusion (no API calls, uses cached data)
-    print("🔍 Step 4/6: Applying reschedule exclusion...")
+    # Step 4: Reschedule exclusion (no API calls)
+    step_start = time.time()
+    log("🔍 Step 4/6: Applying reschedule exclusion...")
     pre = len(meetings)
     meetings = [
         m for m in meetings
         if lead_cache.get(m["lead_id"]) and not is_reschedule(lead_cache[m["lead_id"]], m["_meeting_date"])
     ]
-    print(f"   {pre} → {len(meetings)} (removed {pre - len(meetings)} reschedules)")
+    log(f"   ✓ {pre} → {len(meetings)} (removed {pre - len(meetings)}) [{elapsed_since(step_start)}]")
 
-    # Step 5: Bulk existing-customer check (single paginated scan)
+    # Step 5: Existing-customer check (per-lead, sequential)
+    step_start = time.time()
     remaining_lead_ids = list(set(m["lead_id"] for m in meetings))
-    print(f"📥 Step 5/6: Bulk scanning for existing customers ({len(remaining_lead_ids)} candidates)...")
-    existing_customers = build_existing_customer_set_bulk(remaining_lead_ids)
-    print(f"   Found {len(existing_customers)} existing customers to exclude")
+    log(f"📥 Step 5/6: Checking {len(remaining_lead_ids)} leads for existing-customer status...")
+    cutoff_iso = datetime.combine(
+        date.fromisoformat(EXISTING_CUSTOMER_CUTOFF),
+        datetime.min.time(), tzinfo=UTC
+    ).isoformat()
+
+    existing_customers = set()
+    for i, lid in enumerate(remaining_lead_ids, 1):
+        if i % 10 == 0 or i == len(remaining_lead_ids):
+            log(f"   ... {i}/{len(remaining_lead_ids)} checked ({_api_call_count} API calls)")
+        if check_existing_customer(lid, cutoff_iso):
+            existing_customers.add(lid)
+
+    log(f"   ✓ Found {len(existing_customers)} existing customers [{elapsed_since(step_start)}]")
 
     # Step 6: Build final results
-    print("📊 Step 6/6: Building dashboard data...")
+    step_start = time.time()
+    log("📊 Step 6/6: Building dashboard data...")
     valid_meetings = []
     for m in meetings:
         lead_id = m["lead_id"]
@@ -275,7 +275,6 @@ def run_pipeline():
         lead_data = lead_cache.get(lead_id)
         if not lead_data:
             continue
-
         funnel = lead_data.get(FIELD_FUNNEL_NAME_DEAL) or "Unknown"
         valid_meetings.append({
             "date": m["_meeting_date"],
@@ -285,16 +284,14 @@ def run_pipeline():
             "funnel": funnel,
         })
 
-    print(f"   ✅ {len(valid_meetings)} valid first meetings")
+    log(f"   ✅ {len(valid_meetings)} valid first meetings [{elapsed_since(step_start)}]")
 
     # Build daily aggregations
     dates = [today + timedelta(days=i) for i in range(10)]
     daily_data = {}
     funnel_set = set()
-
     for d in dates:
         daily_data[d] = {"booked": 0, "capacity": CAPACITY[d.weekday()], "funnels": {}}
-
     for m in valid_meetings:
         d = m["date"]
         if d not in daily_data:
@@ -307,7 +304,8 @@ def run_pipeline():
     funnels_sorted = sorted(funnel_set)
     now_pacific = datetime.now(PACIFIC)
 
-    print(f"   📡 Total API calls made: {_api_call_count}")
+    log(f"   📡 Total API calls: {_api_call_count}")
+    log(f"   ⏱ Total pipeline time: {elapsed_since(pipeline_start)}")
 
     return {
         "dates": dates,
@@ -734,21 +732,23 @@ new Chart(ctx, {{
 
 def main():
     if not CLOSE_API_KEY:
-        print("❌ Error: CLOSE_API_KEY environment variable is not set.", file=sys.stderr)
+        log("❌ Error: CLOSE_API_KEY environment variable is not set.")
         sys.exit(1)
 
     start_time = time.time()
-    print("🚀 Starting Call Capacity Dashboard update (v5)...")
+    log("🚀 Starting Call Capacity Dashboard update (v6)...")
     data = run_pipeline()
+
+    log("📄 Generating HTML...")
     html = generate_html(data)
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write(html)
 
     elapsed = time.time() - start_time
-    print(f"\n✅ Dashboard written to {OUTPUT_FILE}")
-    print(f"   {len(data['valid_meetings'])} first meetings across {len(data['funnels'])} funnels")
-    print(f"   ⏱ Completed in {elapsed:.1f}s")
+    log(f"\n✅ Dashboard written to {OUTPUT_FILE}")
+    log(f"   {len(data['valid_meetings'])} first meetings across {len(data['funnels'])} funnels")
+    log(f"   ⏱ Total time: {elapsed:.1f}s")
 
 
 if __name__ == "__main__":
