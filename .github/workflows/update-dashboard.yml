@@ -12,7 +12,7 @@ permissions:
 jobs:
   update-dashboard:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -30,7 +30,8 @@ jobs:
         env:
           CLOSE_API_KEY: ${{ secrets.CLOSE_API_KEY }}
           OUTPUT_FILE: index.html
-        run: python update_dashboard.py
+          PYTHONUNBUFFERED: "1"
+        run: python -u update_dashboard.py
 
       - name: Commit and push changes
         run: |
