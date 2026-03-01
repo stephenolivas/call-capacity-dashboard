@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-Call Capacity Dashboard Generator (v6)
+Call Capacity Dashboard Generator (v7 — Bulk Fetch)
 
-Key fixes over v5:
-- All print() calls use flush=True so output appears in GitHub Actions logs
-- Lead fetches use _fields param to only download the 3 fields we need (10x smaller payloads)
-- Existing-customer check is per-lead (not bulk scan of all historical meetings)
-- 0.7s throttle = ~85 req/min, safely under Close's 100/min limit
-- Elapsed time logged at each step for debugging
+Architecture change: Instead of fetching 5,000+ leads individually (one API call each),
+this version paginates through ALL leads in the org in bulk (200 per page with _fields),
+building an in-memory cache. 320 paginated calls replaces 5,420 individual calls.
+
+Similarly, existing-customer detection scans all historical completed meetings in bulk
+rather than checking per-lead.
+
+Estimated runtime: 5-8 minutes for ~64K leads and ~10K meetings.
 """
 
 import os
@@ -48,7 +50,6 @@ EXCLUDED_TITLE_RE = re.compile("|".join(EXCLUDED_TITLE_PATTERNS), re.IGNORECASE)
 FIELD_FIRST_CALL_BOOKED_DATE = "custom.cf_JsJZIVh7QDcFQBXr4cTRBxf1AkREpLdsKiZB4AEJ8Xh"
 FIELD_FUNNEL_NAME_DEAL = "custom.cf_xqDQE8fkPsWa0RNEve7hcaxKblCe6489XeZGRDzyPdX"
 
-# Only fetch these fields from lead objects (huge speed boost)
 LEAD_FIELDS = ",".join([
     "id", "display_name", "name",
     FIELD_FIRST_CALL_BOOKED_DATE,
@@ -58,13 +59,12 @@ LEAD_FIELDS = ",".join([
 EXISTING_CUSTOMER_CUTOFF = "2026-01-01"
 OUTPUT_FILE = os.environ.get("OUTPUT_FILE", "index.html")
 
-API_THROTTLE = 0.7
+API_THROTTLE = 0.5
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 def log(msg):
-    """Print with immediate flush so output shows in GitHub Actions."""
     print(msg, flush=True)
 
 
@@ -80,12 +80,11 @@ _api_call_count = 0
 
 
 def close_get(endpoint, params=None):
-    """Sequential GET with global throttle and retry on 429."""
     global _api_call_count
     time.sleep(API_THROTTLE)
     url = f"{CLOSE_API_BASE}/{endpoint}"
     for attempt in range(5):
-        resp = session.get(url, params=params or {}, timeout=30)
+        resp = session.get(url, params=params or {}, timeout=60)
         _api_call_count += 1
         if resp.status_code == 429:
             wait = float(resp.headers.get("Retry-After", 5))
@@ -97,26 +96,23 @@ def close_get(endpoint, params=None):
     resp.raise_for_status()
 
 
-# ─── Data Fetching ───────────────────────────────────────────────────────────
+# ─── Bulk Data Fetching ─────────────────────────────────────────────────────
 
-def fetch_meetings_in_range(start_date, end_date):
+def fetch_all_meetings_paginated(params_base):
+    """Fetch all meetings matching params with pagination."""
     all_meetings = []
     skip = 0
     limit = 100
 
-    start_iso = datetime.combine(start_date, datetime.min.time(), tzinfo=PACIFIC).astimezone(UTC).isoformat()
-    end_iso = datetime.combine(end_date, datetime.min.time(), tzinfo=PACIFIC).astimezone(UTC).isoformat()
-
     while True:
-        data = close_get("activity/meeting", {
-            "_skip": skip,
-            "_limit": limit,
-            "date_start__gte": start_iso,
-            "date_start__lt": end_iso,
-        })
+        params = {**params_base, "_skip": skip, "_limit": limit}
+        data = close_get("activity/meeting", params)
         meetings = data.get("data", [])
         all_meetings.extend(meetings)
-        log(f"   ... fetched {len(all_meetings)} meetings so far")
+
+        if len(all_meetings) % 500 == 0 or not data.get("has_more", False):
+            log(f"   ... {len(all_meetings)} meetings fetched")
+
         if not data.get("has_more", False):
             break
         skip += limit
@@ -124,33 +120,60 @@ def fetch_meetings_in_range(start_date, end_date):
     return all_meetings
 
 
-def fetch_leads_sequential(lead_ids):
-    """Fetch leads with only the fields we need (_fields param)."""
+def build_lead_cache_bulk():
+    """
+    Paginate through ALL leads in the org with _fields, building a
+    dict of lead_id → lead_data. At 200/page with only 5 fields,
+    this is ~320 API calls for 64K leads — way faster than 5K+ individual fetches.
+    """
     cache = {}
-    total = len(lead_ids)
-    for i, lid in enumerate(lead_ids, 1):
-        if i % 10 == 0 or i == total:
-            log(f"   ... {i}/{total} leads fetched ({_api_call_count} API calls)")
-        try:
-            cache[lid] = close_get(f"lead/{lid}", {"_fields": LEAD_FIELDS})
-        except requests.HTTPError as e:
-            log(f"  ⚠ Could not fetch lead {lid}: {e}")
-            cache[lid] = None
+    skip = 0
+    limit = 200
+
+    while True:
+        data = close_get("lead", {
+            "_skip": skip,
+            "_limit": limit,
+            "_fields": LEAD_FIELDS,
+        })
+        leads = data.get("data", [])
+        for lead in leads:
+            cache[lead["id"]] = lead
+
+        if len(cache) % 2000 == 0 or not data.get("has_more", False):
+            log(f"   ... {len(cache)} leads cached ({_api_call_count} API calls)")
+
+        if not data.get("has_more", False):
+            break
+        skip += limit
+
     return cache
 
 
-def check_existing_customer(lead_id, cutoff_iso):
-    """Check if a single lead has completed meetings before cutoff."""
-    try:
-        data = close_get("activity/meeting", {
-            "lead_id": lead_id,
-            "_limit": 1,
-            "status": "completed",
-            "date_start__lt": cutoff_iso,
-        })
-        return len(data.get("data", [])) > 0
-    except requests.HTTPError:
-        return False
+def build_existing_customer_set_bulk(candidate_lead_ids):
+    """
+    Scan ALL completed meetings before cutoff date in bulk.
+    Cross-reference with candidate lead IDs to find existing customers.
+    """
+    cutoff_iso = datetime.combine(
+        date.fromisoformat(EXISTING_CUSTOMER_CUTOFF),
+        datetime.min.time(), tzinfo=UTC
+    ).isoformat()
+
+    candidate_set = set(candidate_lead_ids)
+    existing = set()
+
+    meetings = fetch_all_meetings_paginated({
+        "status": "completed",
+        "date_start__lt": cutoff_iso,
+    })
+
+    for m in meetings:
+        lid = m.get("lead_id")
+        if lid and lid in candidate_set:
+            existing.add(lid)
+
+    return existing
 
 
 # ─── Exclusion Logic ─────────────────────────────────────────────────────────
@@ -201,13 +224,18 @@ def run_pipeline():
     end_date = today + timedelta(days=10)
     log(f"📅 Date range: {today} to {end_date} (Pacific)")
 
-    # Step 1: Fetch all meetings
+    # Step 1: Fetch meetings in date range
     step_start = time.time()
-    log("📥 Step 1/6: Fetching meetings...")
-    raw_meetings = fetch_meetings_in_range(today, end_date)
-    log(f"   ✓ {len(raw_meetings)} meetings fetched [{elapsed_since(step_start)}]")
+    log("📥 Step 1/6: Fetching meetings in date range...")
+    start_iso = datetime.combine(today, datetime.min.time(), tzinfo=PACIFIC).astimezone(UTC).isoformat()
+    end_iso = datetime.combine(end_date, datetime.min.time(), tzinfo=PACIFIC).astimezone(UTC).isoformat()
+    raw_meetings = fetch_all_meetings_paginated({
+        "date_start__gte": start_iso,
+        "date_start__lt": end_iso,
+    })
+    log(f"   ✓ {len(raw_meetings)} meetings [{elapsed_since(step_start)}]")
 
-    # Step 2: Local exclusions (instant, no API calls)
+    # Step 2: Local exclusions (instant)
     step_start = time.time()
     log("🔍 Step 2/6: Applying local exclusions...")
     meetings = []
@@ -227,16 +255,16 @@ def run_pipeline():
             continue
         m["_meeting_date"] = meeting_date
         meetings.append(m)
-    log(f"   ✓ {len(raw_meetings)} → {len(meetings)} [{elapsed_since(step_start)}]")
+    unique_leads_needed = len(set(m["lead_id"] for m in meetings))
+    log(f"   ✓ {len(raw_meetings)} → {len(meetings)} meetings ({unique_leads_needed} unique leads) [{elapsed_since(step_start)}]")
 
-    # Step 3: Fetch unique leads (main API cost, but with _fields for speed)
+    # Step 3: Build FULL lead cache via bulk pagination
     step_start = time.time()
-    unique_lead_ids = list(set(m["lead_id"] for m in meetings))
-    log(f"📥 Step 3/6: Fetching {len(unique_lead_ids)} unique leads (slim _fields mode)...")
-    lead_cache = fetch_leads_sequential(unique_lead_ids)
-    log(f"   ✓ All leads fetched [{elapsed_since(step_start)}]")
+    log(f"📥 Step 3/6: Building lead cache (bulk pagination, 200/page with _fields)...")
+    lead_cache = build_lead_cache_bulk()
+    log(f"   ✓ {len(lead_cache)} leads cached [{elapsed_since(step_start)}]")
 
-    # Step 4: Reschedule exclusion (no API calls)
+    # Step 4: Reschedule exclusion (instant, from cache)
     step_start = time.time()
     log("🔍 Step 4/6: Applying reschedule exclusion...")
     pre = len(meetings)
@@ -246,23 +274,12 @@ def run_pipeline():
     ]
     log(f"   ✓ {pre} → {len(meetings)} (removed {pre - len(meetings)}) [{elapsed_since(step_start)}]")
 
-    # Step 5: Existing-customer check (per-lead, sequential)
+    # Step 5: Bulk existing-customer scan
     step_start = time.time()
     remaining_lead_ids = list(set(m["lead_id"] for m in meetings))
-    log(f"📥 Step 5/6: Checking {len(remaining_lead_ids)} leads for existing-customer status...")
-    cutoff_iso = datetime.combine(
-        date.fromisoformat(EXISTING_CUSTOMER_CUTOFF),
-        datetime.min.time(), tzinfo=UTC
-    ).isoformat()
-
-    existing_customers = set()
-    for i, lid in enumerate(remaining_lead_ids, 1):
-        if i % 10 == 0 or i == len(remaining_lead_ids):
-            log(f"   ... {i}/{len(remaining_lead_ids)} checked ({_api_call_count} API calls)")
-        if check_existing_customer(lid, cutoff_iso):
-            existing_customers.add(lid)
-
-    log(f"   ✓ Found {len(existing_customers)} existing customers [{elapsed_since(step_start)}]")
+    log(f"📥 Step 5/6: Scanning historical meetings for existing customers ({len(remaining_lead_ids)} candidates)...")
+    existing_customers = build_existing_customer_set_bulk(remaining_lead_ids)
+    log(f"   ✓ {len(existing_customers)} existing customers found [{elapsed_since(step_start)}]")
 
     # Step 6: Build final results
     step_start = time.time()
@@ -305,7 +322,7 @@ def run_pipeline():
     now_pacific = datetime.now(PACIFIC)
 
     log(f"   📡 Total API calls: {_api_call_count}")
-    log(f"   ⏱ Total pipeline time: {elapsed_since(pipeline_start)}")
+    log(f"   ⏱ Pipeline time: {elapsed_since(pipeline_start)}")
 
     return {
         "dates": dates,
@@ -736,7 +753,7 @@ def main():
         sys.exit(1)
 
     start_time = time.time()
-    log("🚀 Starting Call Capacity Dashboard update (v6)...")
+    log("🚀 Starting Call Capacity Dashboard update (v7 — Bulk Fetch)...")
     data = run_pipeline()
 
     log("📄 Generating HTML...")
