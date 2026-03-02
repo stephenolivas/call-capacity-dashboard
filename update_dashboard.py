@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-Call Capacity Dashboard Generator (v7 — Bulk Fetch)
+Call Capacity Dashboard Generator (v8 — Single Meeting Fetch + Python Filtering)
 
-Architecture change: Instead of fetching 5,000+ leads individually (one API call each),
-this version paginates through ALL leads in the org in bulk (200 per page with _fields),
-building an in-memory cache. 320 paginated calls replaces 5,420 individual calls.
+Key insight from v7 logs: Close API's date_start__gte/date_start__lt params are
+silently ignored on the activity/meeting endpoint, so it returns ALL meetings.
 
-Similarly, existing-customer detection scans all historical completed meetings in bulk
-rather than checking per-lead.
+Solution: Fetch ALL meetings ONCE, then filter by date in Python. This single
+dataset serves both the 10-day window AND the existing-customer check.
+Leads are fetched individually with _fields (only for the ~200-400 unique leads
+actually in the 10-day window, not the inflated 5,420 from unfiltered results).
 
-Estimated runtime: 5-8 minutes for ~64K leads and ~10K meetings.
+Estimated: ~107 meeting pages + ~200-400 lead fetches = 5-8 minutes.
 """
 
 import os
@@ -56,7 +57,7 @@ LEAD_FIELDS = ",".join([
     FIELD_FUNNEL_NAME_DEAL,
 ])
 
-EXISTING_CUSTOMER_CUTOFF = "2026-01-01"
+EXISTING_CUSTOMER_CUTOFF_DATE = date.fromisoformat("2026-01-01")
 OUTPUT_FILE = os.environ.get("OUTPUT_FILE", "index.html")
 
 API_THROTTLE = 0.5
@@ -96,84 +97,25 @@ def close_get(endpoint, params=None):
     resp.raise_for_status()
 
 
-# ─── Bulk Data Fetching ─────────────────────────────────────────────────────
+# ─── Date Parsing ────────────────────────────────────────────────────────────
 
-def fetch_all_meetings_paginated(params_base):
-    """Fetch all meetings matching params with pagination."""
-    all_meetings = []
-    skip = 0
-    limit = 100
-
-    while True:
-        params = {**params_base, "_skip": skip, "_limit": limit}
-        data = close_get("activity/meeting", params)
-        meetings = data.get("data", [])
-        all_meetings.extend(meetings)
-
-        if len(all_meetings) % 500 == 0 or not data.get("has_more", False):
-            log(f"   ... {len(all_meetings)} meetings fetched")
-
-        if not data.get("has_more", False):
-            break
-        skip += limit
-
-    return all_meetings
+def parse_meeting_datetime_utc(meeting):
+    """Parse meeting start time to a UTC datetime."""
+    raw = meeting.get("starts_at") or meeting.get("activity_at") or meeting.get("date_start")
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
 
 
-def build_lead_cache_bulk():
-    """
-    Paginate through ALL leads in the org with _fields, building a
-    dict of lead_id → lead_data. At 200/page with only 5 fields,
-    this is ~320 API calls for 64K leads — way faster than 5K+ individual fetches.
-    """
-    cache = {}
-    skip = 0
-    limit = 200
-
-    while True:
-        data = close_get("lead", {
-            "_skip": skip,
-            "_limit": limit,
-            "_fields": LEAD_FIELDS,
-        })
-        leads = data.get("data", [])
-        for lead in leads:
-            cache[lead["id"]] = lead
-
-        if len(cache) % 2000 == 0 or not data.get("has_more", False):
-            log(f"   ... {len(cache)} leads cached ({_api_call_count} API calls)")
-
-        if not data.get("has_more", False):
-            break
-        skip += limit
-
-    return cache
-
-
-def build_existing_customer_set_bulk(candidate_lead_ids):
-    """
-    Scan ALL completed meetings before cutoff date in bulk.
-    Cross-reference with candidate lead IDs to find existing customers.
-    """
-    cutoff_iso = datetime.combine(
-        date.fromisoformat(EXISTING_CUSTOMER_CUTOFF),
-        datetime.min.time(), tzinfo=UTC
-    ).isoformat()
-
-    candidate_set = set(candidate_lead_ids)
-    existing = set()
-
-    meetings = fetch_all_meetings_paginated({
-        "status": "completed",
-        "date_start__lt": cutoff_iso,
-    })
-
-    for m in meetings:
-        lid = m.get("lead_id")
-        if lid and lid in candidate_set:
-            existing.add(lid)
-
-    return existing
+def parse_meeting_date_pacific(meeting):
+    """Parse meeting start time to a Pacific date."""
+    dt = parse_meeting_datetime_utc(meeting)
+    if not dt:
+        return None
+    return dt.astimezone(PACIFIC).date()
 
 
 # ─── Exclusion Logic ─────────────────────────────────────────────────────────
@@ -192,14 +134,6 @@ def is_excluded_by_user(user_id, users_list):
             if uid in EXCLUDED_USER_IDS:
                 return True
     return False
-
-
-def get_meeting_date_pacific(meeting):
-    starts_at = meeting.get("starts_at") or meeting.get("activity_at") or meeting.get("date_start")
-    if not starts_at or not isinstance(starts_at, str):
-        return None
-    dt = datetime.fromisoformat(starts_at.replace("Z", "+00:00"))
-    return dt.astimezone(PACIFIC).date()
 
 
 def is_reschedule(lead_data, meeting_date):
@@ -223,72 +157,105 @@ def run_pipeline():
     today = datetime.now(PACIFIC).date()
     end_date = today + timedelta(days=10)
     log(f"📅 Date range: {today} to {end_date} (Pacific)")
+    log(f"📅 Existing-customer cutoff: {EXISTING_CUSTOMER_CUTOFF_DATE}")
 
-    # Step 1: Fetch meetings in date range
+    # ── Step 1: Fetch ALL meetings from Close (one paginated scan) ──
     step_start = time.time()
-    log("📥 Step 1/6: Fetching meetings in date range...")
-    start_iso = datetime.combine(today, datetime.min.time(), tzinfo=PACIFIC).astimezone(UTC).isoformat()
-    end_iso = datetime.combine(end_date, datetime.min.time(), tzinfo=PACIFIC).astimezone(UTC).isoformat()
-    raw_meetings = fetch_all_meetings_paginated({
-        "date_start__gte": start_iso,
-        "date_start__lt": end_iso,
-    })
-    log(f"   ✓ {len(raw_meetings)} meetings [{elapsed_since(step_start)}]")
+    log("📥 Step 1/6: Fetching ALL meetings from Close (single paginated scan)...")
+    all_meetings = []
+    skip = 0
+    limit = 100
+    while True:
+        data = close_get("activity/meeting", {"_skip": skip, "_limit": limit})
+        batch = data.get("data", [])
+        all_meetings.extend(batch)
+        if len(all_meetings) % 1000 == 0:
+            log(f"   ... {len(all_meetings)} meetings fetched")
+        if not data.get("has_more", False):
+            break
+        skip += limit
+    log(f"   ✓ {len(all_meetings)} total meetings fetched [{elapsed_since(step_start)}]")
 
-    # Step 2: Local exclusions (instant)
+    # ── Step 2: Filter + classify in Python ──
     step_start = time.time()
-    log("🔍 Step 2/6: Applying local exclusions...")
-    meetings = []
-    for m in raw_meetings:
-        title = m.get("title", "")
-        status = m.get("status", "")
-        if is_excluded_by_title(title):
+    log("🔍 Step 2/6: Filtering meetings by date and applying local exclusions...")
+
+    # Build existing-customer set: leads with completed meetings before cutoff
+    existing_customer_leads = set()
+    for m in all_meetings:
+        if m.get("status") == "completed":
+            d = parse_meeting_date_pacific(m)
+            if d and d < EXISTING_CUSTOMER_CUTOFF_DATE and m.get("lead_id"):
+                existing_customer_leads.add(m["lead_id"])
+    log(f"   Found {len(existing_customer_leads)} leads with completed meetings before {EXISTING_CUSTOMER_CUTOFF_DATE}")
+
+    # Filter to 10-day window + apply local exclusions
+    meetings_in_window = []
+    for m in all_meetings:
+        # Date filter (Python-side since API doesn't support it reliably)
+        meeting_date = parse_meeting_date_pacific(m)
+        if not meeting_date:
+            continue
+        if meeting_date < today or meeting_date >= end_date:
+            continue
+
+        # Local exclusions
+        if is_excluded_by_title(m.get("title", "")):
             continue
         if is_excluded_by_user(m.get("user_id", ""), m.get("users", [])):
             continue
-        if status in ("canceled", "declined-by-org", "declined-by-lead"):
+        if m.get("status") in ("canceled", "declined-by-org", "declined-by-lead"):
             continue
         if not m.get("lead_id"):
             continue
-        meeting_date = get_meeting_date_pacific(m)
-        if not meeting_date:
-            continue
+
         m["_meeting_date"] = meeting_date
-        meetings.append(m)
-    unique_leads_needed = len(set(m["lead_id"] for m in meetings))
-    log(f"   ✓ {len(raw_meetings)} → {len(meetings)} meetings ({unique_leads_needed} unique leads) [{elapsed_since(step_start)}]")
+        meetings_in_window.append(m)
 
-    # Step 3: Build FULL lead cache via bulk pagination
+    unique_lead_ids = set(m["lead_id"] for m in meetings_in_window)
+    log(f"   ✓ {len(meetings_in_window)} meetings in window ({len(unique_lead_ids)} unique leads) [{elapsed_since(step_start)}]")
+
+    # ── Step 3: Fetch only the leads we need (with _fields) ──
     step_start = time.time()
-    log(f"📥 Step 3/6: Building lead cache (bulk pagination, 200/page with _fields)...")
-    lead_cache = build_lead_cache_bulk()
-    log(f"   ✓ {len(lead_cache)} leads cached [{elapsed_since(step_start)}]")
+    lead_ids_list = list(unique_lead_ids)
+    log(f"📥 Step 3/6: Fetching {len(lead_ids_list)} leads (slim _fields mode)...")
+    lead_cache = {}
+    for i, lid in enumerate(lead_ids_list, 1):
+        if i % 20 == 0 or i == len(lead_ids_list):
+            log(f"   ... {i}/{len(lead_ids_list)} leads fetched ({_api_call_count} API calls)")
+        try:
+            lead_cache[lid] = close_get(f"lead/{lid}", {"_fields": LEAD_FIELDS})
+        except requests.HTTPError as e:
+            log(f"  ⚠ Could not fetch lead {lid}: {e}")
+            lead_cache[lid] = None
+    log(f"   ✓ All leads fetched [{elapsed_since(step_start)}]")
 
-    # Step 4: Reschedule exclusion (instant, from cache)
+    # ── Step 4: Apply reschedule exclusion ──
     step_start = time.time()
     log("🔍 Step 4/6: Applying reschedule exclusion...")
-    pre = len(meetings)
-    meetings = [
-        m for m in meetings
+    pre = len(meetings_in_window)
+    meetings_in_window = [
+        m for m in meetings_in_window
         if lead_cache.get(m["lead_id"]) and not is_reschedule(lead_cache[m["lead_id"]], m["_meeting_date"])
     ]
-    log(f"   ✓ {pre} → {len(meetings)} (removed {pre - len(meetings)}) [{elapsed_since(step_start)}]")
+    log(f"   ✓ {pre} → {len(meetings_in_window)} (removed {pre - len(meetings_in_window)}) [{elapsed_since(step_start)}]")
 
-    # Step 5: Bulk existing-customer scan
+    # ── Step 5: Apply existing-customer exclusion ──
     step_start = time.time()
-    remaining_lead_ids = list(set(m["lead_id"] for m in meetings))
-    log(f"📥 Step 5/6: Scanning historical meetings for existing customers ({len(remaining_lead_ids)} candidates)...")
-    existing_customers = build_existing_customer_set_bulk(remaining_lead_ids)
-    log(f"   ✓ {len(existing_customers)} existing customers found [{elapsed_since(step_start)}]")
+    log("🔍 Step 5/6: Applying existing-customer exclusion...")
+    pre = len(meetings_in_window)
+    meetings_in_window = [
+        m for m in meetings_in_window
+        if m["lead_id"] not in existing_customer_leads
+    ]
+    log(f"   ✓ {pre} → {len(meetings_in_window)} (removed {pre - len(meetings_in_window)} existing customers) [{elapsed_since(step_start)}]")
 
-    # Step 6: Build final results
+    # ── Step 6: Build final results ──
     step_start = time.time()
     log("📊 Step 6/6: Building dashboard data...")
     valid_meetings = []
-    for m in meetings:
+    for m in meetings_in_window:
         lead_id = m["lead_id"]
-        if lead_id in existing_customers:
-            continue
         lead_data = lead_cache.get(lead_id)
         if not lead_data:
             continue
@@ -753,7 +720,7 @@ def main():
         sys.exit(1)
 
     start_time = time.time()
-    log("🚀 Starting Call Capacity Dashboard update (v7 — Bulk Fetch)...")
+    log("🚀 Starting Call Capacity Dashboard update (v8)...")
     data = run_pipeline()
 
     log("📄 Generating HTML...")
