@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 """
-Call Capacity Dashboard Generator (v9)
+Call Capacity Dashboard Generator (v10)
 
-Classification rules based on SLT_Classifier_Rules.docx:
-- INCLUDE-based: only meetings matching known first-call title patterns are counted
-- 4 excluded users: Kristin Nelson, Spencer Reynolds, Stephen Olivas, Ahmad Bukhari
-- No reschedule check (First Call Booked Date is unreliable per doc)
-- No existing-customer check (not in doc spec)
-- Title classification follows Steps 1-6 from the doc
-
-UI: Light cream theme matching existing capacity-10day-dashboard.tiiny.site
+Changes from v9:
+- Capacity updated: Mon=57, Tue-Fri=60, Sat=4, Sun=0
+- Tightened classifier: dropped "Meet with", "Intro call", "Vendingpreneurs call"
+  from ambiguous includes. Only core patterns + "Vending Consult" remain.
+- Visual: closer match to original tiiny.site dashboard (dark header bar, warm theme)
 """
 
 import os
@@ -28,7 +25,8 @@ CLOSE_API_BASE = "https://api.close.com/api/v1"
 PACIFIC = ZoneInfo("America/Los_Angeles")
 UTC = ZoneInfo("UTC")
 
-CAPACITY = {0: 44, 1: 47, 2: 47, 3: 47, 4: 47, 5: 4, 6: 0}
+# Updated capacity: Mon=57, Tue-Fri=60, Sat=4, Sun=0
+CAPACITY = {0: 57, 1: 60, 2: 60, 3: 60, 4: 60, 5: 4, 6: 0}
 
 # 4 excluded users per SLT doc
 EXCLUDED_USER_IDS = {
@@ -49,7 +47,7 @@ OUTPUT_FILE = os.environ.get("OUTPUT_FILE", "index.html")
 API_THROTTLE = 0.5
 
 
-# ─── Title Classification (SLT Doc Steps 1-6) ───────────────────────────────
+# ─── Title Classification (SLT Doc) ─────────────────────────────────────────
 
 # Step 3: Exclude patterns
 EXCLUDE_FOLLOW_UP_RE = re.compile(
@@ -57,7 +55,7 @@ EXCLUDE_FOLLOW_UP_RE = re.compile(
     re.IGNORECASE
 )
 
-# Step 5: Known first-call INCLUDE patterns
+# Step 5: Known first-call INCLUDE patterns (core)
 INCLUDE_PATTERNS_RE = re.compile(
     r"vending\s+strategy\s+call"
     r"|vendingpren[eu]+rs?\s+consultation"
@@ -66,13 +64,9 @@ INCLUDE_PATTERNS_RE = re.compile(
     re.IGNORECASE
 )
 
-# Step 6: Ambiguous-but-INCLUDE patterns
+# Step 6: Only "Vending Consult" kept (specific enough)
 INCLUDE_AMBIGUOUS_RE = re.compile(
-    r"vending\s+consult"
-    r"|vendingpren[eu]+rs?\s+w[\s/]"
-    r"|vendingpren[eu]+rs?\s+call"
-    r"|meet\s+with"
-    r"|intro\s+call",
+    r"vending\s+consult",
     re.IGNORECASE
 )
 
@@ -85,10 +79,6 @@ EXCLUDE_AMBIGUOUS_RE = re.compile(
 
 
 def classify_meeting_title(title):
-    """
-    Classify a meeting title per SLT doc Steps 1-6.
-    Returns 'include', 'exclude', or 'exclude_other'.
-    """
     if not title:
         return "exclude_other"
 
@@ -108,19 +98,18 @@ def classify_meeting_title(title):
     if "anthony" in title.lower() and "q&a" in title.lower():
         return "exclude"
 
-    # Step 6 excludes (check before includes to avoid false positives)
+    # Step 6 excludes (check before includes)
     if EXCLUDE_AMBIGUOUS_RE.search(title):
         return "exclude"
 
-    # Step 5: Known first-call patterns → INCLUDE
+    # Step 5: Core first-call patterns → INCLUDE
     if INCLUDE_PATTERNS_RE.search(title):
         return "include"
 
-    # Step 6: Ambiguous-but-include patterns → INCLUDE
+    # Step 6: "Vending Consult" only → INCLUDE
     if INCLUDE_AMBIGUOUS_RE.search(title):
         return "include"
 
-    # Everything else → excluded (not a recognized first call)
     return "exclude_other"
 
 
@@ -197,11 +186,12 @@ def run_pipeline():
         skip += limit
     log(f"   ✓ {len(all_meetings)} total meetings [{elapsed_since(step_start)}]")
 
-    # Step 2: Filter to 10-day window + classify titles
+    # Step 2: Filter + classify
     step_start = time.time()
-    log("🔍 Step 2/4: Filtering to window + classifying titles...")
+    log("🔍 Step 2/4: Filtering + classifying...")
 
     classified = {"include": 0, "exclude": 0, "exclude_other": 0, "user_excluded": 0, "out_of_range": 0}
+    exclude_other_samples = []
     meetings_in_window = []
 
     for m in all_meetings:
@@ -210,14 +200,12 @@ def run_pipeline():
             classified["out_of_range"] += 1
             continue
 
-        # User exclusion
         user_id = m.get("user_id", "")
         users_list = m.get("users", [])
         if user_id in EXCLUDED_USER_IDS or any(u in EXCLUDED_USER_IDS for u in (users_list or [])):
             classified["user_excluded"] += 1
             continue
 
-        # Title classification
         title = m.get("title", "")
         classification = classify_meeting_title(title)
         classified[classification] += 1
@@ -225,14 +213,19 @@ def run_pipeline():
         if classification == "include":
             m["_meeting_date"] = meeting_date
             meetings_in_window.append(m)
+        elif classification == "exclude_other" and len(exclude_other_samples) < 10:
+            exclude_other_samples.append(title)
 
-    log(f"   Classification results:")
-    log(f"     Out of date range: {classified['out_of_range']}")
-    log(f"     User excluded: {classified['user_excluded']}")
-    log(f"     Title INCLUDE: {classified['include']}")
-    log(f"     Title EXCLUDE: {classified['exclude']}")
-    log(f"     Title EXCLUDE_OTHER: {classified['exclude_other']}")
-    log(f"   ✓ {len(meetings_in_window)} first calls in window [{elapsed_since(step_start)}]")
+    log(f"   Out of range: {classified['out_of_range']}")
+    log(f"   User excluded: {classified['user_excluded']}")
+    log(f"   INCLUDE: {classified['include']}")
+    log(f"   EXCLUDE: {classified['exclude']}")
+    log(f"   EXCLUDE_OTHER: {classified['exclude_other']}")
+    if exclude_other_samples:
+        log(f"   Sample exclude_other titles:")
+        for t in exclude_other_samples:
+            log(f"     - {t}")
+    log(f"   ✓ {len(meetings_in_window)} first calls [{elapsed_since(step_start)}]")
 
     # Step 3: Fetch leads for funnel data
     step_start = time.time()
@@ -249,7 +242,7 @@ def run_pipeline():
             lead_cache[lid] = None
     log(f"   ✓ All leads fetched [{elapsed_since(step_start)}]")
 
-    # Step 4: Build final results
+    # Step 4: Build results
     step_start = time.time()
     log("📊 Step 4/4: Building dashboard data...")
     valid_meetings = []
@@ -261,13 +254,11 @@ def run_pipeline():
             "date": m["_meeting_date"],
             "title": m.get("title", ""),
             "lead_id": lead_id or "",
-            "lead_name": (lead_data.get("display_name") or lead_data.get("name", "Unknown")) if lead_data else "Unknown",
             "funnel": funnel,
         })
 
     log(f"   ✅ {len(valid_meetings)} valid first meetings [{elapsed_since(step_start)}]")
 
-    # Build daily aggregations
     dates = [today + timedelta(days=i) for i in range(10)]
     daily_data = {}
     funnel_set = set()
@@ -299,7 +290,7 @@ def run_pipeline():
     }
 
 
-# ─── HTML Generation (Light Cream Theme) ────────────────────────────────────
+# ─── HTML Generation ────────────────────────────────────────────────────────
 
 def generate_html(data):
     dates = data["dates"]
@@ -309,7 +300,7 @@ def generate_html(data):
     last_updated_date = data["last_updated_date"]
     today = data["today"]
 
-    # Build date column headers
+    # Date headers
     date_headers = ""
     for d in dates:
         is_today = d == today
@@ -318,60 +309,79 @@ def generate_html(data):
         cls = ' class="today-col"' if is_today else ""
         date_headers += f"<th{cls}>{day_label}<br>{date_str}</th>"
 
-    # Capacity metrics rows
+    # Capacity metrics
+    def td(val, d, extra_class=""):
+        is_today = d == today
+        cls_parts = []
+        if is_today:
+            cls_parts.append("today-col")
+        if extra_class:
+            cls_parts.append(extra_class)
+        cls_attr = f' class="{" ".join(cls_parts)}"' if cls_parts else ""
+        return f"<td{cls_attr}>{val}</td>"
+
     cap_row = ""
     booked_row = ""
     avail_row = ""
     util_row = ""
+
     for d in dates:
-        is_today = d == today
-        cls = ' class="today-col"' if is_today else ""
         cap = daily[d]["capacity"]
         bk = daily[d]["booked"]
-        avail = cap - bk if cap > 0 else "–"
-        pct = round(bk / cap * 100, 2) if cap > 0 else None
-        pct_str = f"{pct:.2f}%" if pct is not None else "N/A"
 
-        if pct is not None:
-            if pct >= 80:
-                pct_class = "util-high"
-            elif pct >= 50:
-                pct_class = "util-mid"
-            else:
-                pct_class = "util-low"
+        # Capacity
+        cap_row += td(cap if cap > 0 else "–", d)
+
+        # Booked (green when > 0)
+        bk_cls = "val-green" if bk > 0 else "val-zero"
+        booked_row += td(bk, d, bk_cls)
+
+        # Available
+        if cap > 0:
+            avail = cap - bk
+            avail_row += td(avail, d)
         else:
-            pct_class = ""
+            avail_row += td("–", d)
 
-        cap_row += f"<td{cls}>{cap if cap > 0 else '–'}</td>"
-        bk_class = "booked-val"
-        booked_row += f'<td{cls} class="{bk_class}">{bk}</td>'
-        avail_row += f"<td{cls}>{avail}</td>"
-        util_row += f'<td{cls} class="{pct_class}">{pct_str}</td>'
+        # Utilization
+        if cap > 0:
+            pct = bk / cap * 100
+            pct_str = f"{pct:.2f}%"
+            if pct >= 80:
+                u_cls = "util-high"
+            elif pct >= 40:
+                u_cls = "util-mid"
+            else:
+                u_cls = "util-low"
+            util_row += td(pct_str, d, u_cls)
+        else:
+            util_row += td("N/A", d)
 
-    # Funnel breakdown rows
+    # Funnel rows
     funnel_rows_html = ""
     for funnel in funnels:
         cells = ""
         for d in dates:
             is_today = d == today
-            cls = ' class="today-col"' if is_today else ""
             count = daily[d]["funnels"].get(funnel, 0)
-            val = str(count) if count > 0 else "0"
-            bold = " style='font-weight:700;color:#b45309;'" if count > 0 and is_today else (" style='font-weight:600;'" if count > 0 else "")
-            cells += f"<td{cls}{bold}>{val}</td>"
-        funnel_rows_html += f"""
-        <tr>
-            <td class="funnel-name">{funnel}</td>
+            if count > 0:
+                cls = "today-col val-green" if is_today else "val-green"
+            else:
+                cls = "today-col" if is_today else ""
+            cls_attr = f' class="{cls}"' if cls else ""
+            cells += f"<td{cls_attr}>{count}</td>"
+        funnel_rows_html += f"""<tr>
+            <td class="row-label">{funnel}</td>
             {cells}
         </tr>"""
 
-    # Totals row for funnel section
-    funnel_totals = ""
+    # Total row
+    total_cells = ""
     for d in dates:
         is_today = d == today
-        cls = ' class="today-col"' if is_today else ""
         t = daily[d]["booked"]
-        funnel_totals += f'<td{cls} style="font-weight:700;">{t}</td>'
+        cls = "today-col total-val" if is_today else "total-val"
+        total_cells += f'<td class="{cls}">{t}</td>'
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -380,24 +390,24 @@ def generate_html(data):
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Call Capacity Dashboard</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
   :root {{
-    --bg: #faf8f5;
-    --surface: #ffffff;
-    --border: #e5e0d8;
-    --border-light: #f0ece6;
-    --text: #1a1a1a;
+    --bg: #f5f0e8;
+    --surface: #fff;
+    --header-bg: #1a2e1a;
+    --header-text: #e8f0e8;
+    --border: #d6cfc4;
+    --border-light: #ebe6dd;
+    --text: #2a2520;
     --text-dim: #6b6560;
-    --text-muted: #9a9490;
-    --accent: #2d7a4f;
-    --accent-bg: #e8f5ee;
-    --green: #16a34a;
+    --green: #2d7a3a;
+    --green-light: #16a34a;
     --amber: #b45309;
-    --red: #dc2626;
-    --today-bg: #fef9ee;
-    --today-border: #f0e4c8;
-    --section-accent: #2d7a4f;
+    --red: #c42b2b;
+    --today-bg: #fef6e6;
+    --today-header: #f0e0b8;
+    --section-green: #2d6b3a;
   }}
 
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
@@ -407,168 +417,166 @@ def generate_html(data):
     background: var(--bg);
     color: var(--text);
     min-height: 100vh;
-    padding: 1.5rem 2rem;
   }}
 
-  .dashboard {{
-    max-width: 1400px;
-    margin: 0 auto;
-  }}
-
-  .header {{
+  .header-bar {{
+    background: var(--header-bg);
+    padding: 1rem 2rem;
     display: flex;
     justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 2rem;
-    padding-bottom: 1rem;
-    border-bottom: 2px solid var(--border);
-  }}
-  .header-left h1 {{
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: var(--text);
-    display: flex;
     align-items: center;
-    gap: 0.5rem;
   }}
-  .header-left .subtitle {{
-    font-size: 0.8rem;
-    color: var(--text-dim);
-    margin-top: 0.25rem;
+  .header-bar h1 {{
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: var(--header-text);
+  }}
+  .header-bar h1 span {{
+    margin-right: 0.4rem;
+  }}
+  .header-bar .subtitle {{
+    font-size: 0.75rem;
+    color: #a0b8a0;
+    margin-top: 0.15rem;
   }}
   .header-right {{
     text-align: right;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 0.8rem;
+    color: var(--header-text);
   }}
   .header-right .date {{
+    font-size: 0.85rem;
     font-weight: 600;
-    color: var(--text);
   }}
   .header-right .time {{
-    color: var(--text-dim);
-    font-size: 0.75rem;
+    font-size: 0.7rem;
+    color: #a0b8a0;
   }}
   .status-dot {{
     display: inline-block;
-    width: 7px; height: 7px;
-    background: var(--green);
+    width: 8px; height: 8px;
+    background: #4ade80;
     border-radius: 50%;
-    margin-right: 4px;
+    margin-right: 6px;
     vertical-align: middle;
   }}
 
+  .content {{
+    padding: 1.25rem 2rem 2rem;
+    max-width: 1500px;
+    margin: 0 auto;
+  }}
+
   .section-label {{
-    font-size: 0.7rem;
-    font-weight: 700;
-    letter-spacing: 0.1em;
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--section-accent);
-    padding: 0.75rem 1rem 0.4rem;
+    color: var(--section-green);
+    padding: 0.7rem 0.75rem 0.35rem;
+    border-left: 3px solid var(--section-green);
     background: var(--surface);
-    border-left: 3px solid var(--section-accent);
+    border-top: 1px solid var(--border);
+    border-right: 1px solid var(--border);
   }}
 
   .table-wrap {{
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 6px;
     overflow-x: auto;
-    margin-bottom: 1.5rem;
+    margin-bottom: 1.25rem;
   }}
 
   table {{
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.82rem;
   }}
   th {{
-    padding: 0.65rem 0.8rem;
+    padding: 0.6rem 0.7rem;
     text-align: center;
-    font-weight: 600;
+    font-weight: 700;
+    font-size: 0.72rem;
     color: var(--text-dim);
     border-bottom: 2px solid var(--border);
-    font-size: 0.75rem;
-    white-space: nowrap;
     background: var(--surface);
+    white-space: nowrap;
+    line-height: 1.35;
   }}
   th:first-child {{
     text-align: left;
-    min-width: 140px;
-    padding-left: 1rem;
+    padding-left: 0.75rem;
+    min-width: 130px;
   }}
   td {{
-    padding: 0.5rem 0.8rem;
+    padding: 0.45rem 0.7rem;
     text-align: center;
     border-bottom: 1px solid var(--border-light);
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.8rem;
     font-weight: 500;
+    color: var(--text);
   }}
-  td:first-child {{
-    text-align: left;
-    font-family: 'Inter', sans-serif;
+
+  .row-label {{
+    text-align: left !important;
+    font-family: 'Inter', sans-serif !important;
     font-weight: 500;
-    padding-left: 1rem;
+    font-size: 0.78rem;
+    padding-left: 0.75rem !important;
+    color: var(--text);
+  }}
+  .metric-label {{
+    text-align: left !important;
+    font-family: 'Inter', sans-serif !important;
+    font-weight: 600;
+    font-size: 0.8rem;
+    padding-left: 0.75rem !important;
     color: var(--text);
   }}
 
   .today-col {{
     background: var(--today-bg) !important;
-    border-left: 1px solid var(--today-border);
-    border-right: 1px solid var(--today-border);
   }}
   th.today-col {{
-    background: var(--today-bg) !important;
+    background: var(--today-header) !important;
     color: var(--amber);
-    font-weight: 700;
+    font-weight: 800;
   }}
 
-  .metric-label {{
-    font-weight: 600;
-    color: var(--text);
-  }}
-  .booked-val {{
-    color: var(--accent);
-    font-weight: 600;
-  }}
-  .util-low {{ color: var(--green); font-weight: 600; }}
-  .util-mid {{ color: var(--amber); font-weight: 600; }}
-  .util-high {{ color: var(--red); font-weight: 600; }}
+  .val-green {{ color: var(--green); font-weight: 700; }}
+  .val-zero {{ color: var(--text-dim); }}
+  .total-val {{ font-weight: 700; }}
 
-  .funnel-name {{
-    font-size: 0.78rem;
-    color: var(--text);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 180px;
-  }}
+  .util-low {{ color: var(--green-light); font-weight: 700; }}
+  .util-mid {{ color: var(--amber); font-weight: 700; }}
+  .util-high {{ color: var(--red); font-weight: 700; }}
 
   tr.totals-row td {{
     border-top: 2px solid var(--border);
     font-weight: 700;
-    color: var(--text);
   }}
 
   @media (max-width: 900px) {{
-    body {{ padding: 0.75rem; }}
+    .header-bar {{ padding: 0.75rem 1rem; }}
+    .content {{ padding: 0.75rem 1rem; }}
   }}
 </style>
 </head>
 <body>
-<div class="dashboard">
 
-  <div class="header">
-    <div class="header-left">
-      <h1>📞 Call Capacity Dashboard</h1>
-      <div class="subtitle">10-Day Lookahead · First Meetings Only</div>
-    </div>
-    <div class="header-right">
-      <div class="date"><span class="status-dot"></span>{last_updated_date}</div>
-      <div class="time">Last updated: {last_updated}</div>
-    </div>
+<div class="header-bar">
+  <div>
+    <h1><span>📞</span>Call Capacity Dashboard</h1>
+    <div class="subtitle">10-Day Lookahead · First Meetings Only</div>
   </div>
+  <div class="header-right">
+    <div class="date"><span class="status-dot"></span>{last_updated_date}</div>
+    <div class="time">Last updated: {last_updated}</div>
+  </div>
+</div>
+
+<div class="content">
 
   <div class="table-wrap">
     <div class="section-label">CAPACITY METRICS</div>
@@ -580,22 +588,10 @@ def generate_html(data):
         </tr>
       </thead>
       <tbody>
-        <tr>
-          <td class="metric-label">Capacity</td>
-          {cap_row}
-        </tr>
-        <tr>
-          <td class="metric-label">Booked</td>
-          {booked_row}
-        </tr>
-        <tr>
-          <td class="metric-label">Available</td>
-          {avail_row}
-        </tr>
-        <tr>
-          <td class="metric-label">Utilization %</td>
-          {util_row}
-        </tr>
+        <tr><td class="metric-label">Capacity</td>{cap_row}</tr>
+        <tr><td class="metric-label">Booked</td>{booked_row}</tr>
+        <tr><td class="metric-label">Available</td>{avail_row}</tr>
+        <tr><td class="metric-label">Utilization %</td>{util_row}</tr>
       </tbody>
     </table>
   </div>
@@ -613,7 +609,7 @@ def generate_html(data):
         {funnel_rows_html}
         <tr class="totals-row">
           <td class="metric-label">TOTAL</td>
-          {funnel_totals}
+          {total_cells}
         </tr>
       </tbody>
     </table>
@@ -634,7 +630,7 @@ def main():
         sys.exit(1)
 
     start_time = time.time()
-    log("🚀 Starting Call Capacity Dashboard update (v9 — SLT Rules)...")
+    log("🚀 Starting Call Capacity Dashboard update (v10)...")
     data = run_pipeline()
 
     log("📄 Generating HTML...")
