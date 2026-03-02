@@ -84,6 +84,7 @@ body {
 table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
 }
 
 th {
@@ -100,7 +101,6 @@ th {
 th:first-child {
   text-align: left;
   padding-left: 0.6rem;
-  min-width: 120px;
 }
 
 td {
@@ -208,7 +208,7 @@ tr.total-row td {
   </div>
   <div class="right">
     <div class="date"><span class="dot"></span>Monday, March 2, 2026</div>
-    <div class="time">Last updated: 03:43 PM PST</div>
+    <div class="time">Last updated: 03:56 PM PST</div>
   </div>
 </div>
 
@@ -217,15 +217,19 @@ tr.total-row td {
   <div class="card">
     <div class="sec">CAPACITY METRICS</div>
     <table>
+      <colgroup>
+        <col style="width:150px">
+        <col span="10">
+      </colgroup>
       <thead><tr>
         <th></th>
         <th class="col-date today">► TODAY<br>03/02</th><th class="col-date">TUE<br>03/03</th><th class="col-date">WED<br>03/04</th><th class="col-date">THU<br>03/05</th><th class="col-date">FRI<br>03/06</th><th class="col-date">SAT<br>03/07</th><th class="col-date">SUN<br>03/08</th><th class="col-date">MON<br>03/09</th><th class="col-date">TUE<br>03/10</th><th class="col-date">WED<br>03/11</th>
       </tr></thead>
       <tbody>
         <tr><td class="metric">Capacity</td><td class="num today">57</td><td class="num">60</td><td class="num">60</td><td class="num">60</td><td class="num">60</td><td class="num">4</td><td class="num">–</td><td class="num">57</td><td class="num">60</td><td class="num">60</td></tr>
-        <tr><td class="metric">Booked</td><td class="num booked today">48</td><td class="num booked">40</td><td class="num booked">11</td><td class="num booked">4</td><td class="num booked">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
-        <tr><td class="metric">Available</td><td class="num today">9</td><td class="num">20</td><td class="num">49</td><td class="num">56</td><td class="num">59</td><td class="num">4</td><td class="num">–</td><td class="num">57</td><td class="num">60</td><td class="num">60</td></tr>
-        <tr><td class="metric">Utilization %</td><td class="num util-high today">84.21%</td><td class="num util-mid">66.67%</td><td class="num util-low">18.33%</td><td class="num util-low">6.67%</td><td class="num util-low">1.67%</td><td class="num util-low">0.00%</td><td class="num">N/A</td><td class="num util-low">0.00%</td><td class="num util-low">0.00%</td><td class="num util-low">0.00%</td></tr>
+        <tr><td class="metric">Booked</td><td class="num booked today">48</td><td class="num booked">40</td><td class="num booked">10</td><td class="num booked">4</td><td class="num booked">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
+        <tr><td class="metric">Available</td><td class="num today">9</td><td class="num">20</td><td class="num">50</td><td class="num">56</td><td class="num">59</td><td class="num">4</td><td class="num">–</td><td class="num">57</td><td class="num">60</td><td class="num">60</td></tr>
+        <tr><td class="metric">Utilization %</td><td class="num util-high today">84.21%</td><td class="num util-mid">66.67%</td><td class="num util-low">16.67%</td><td class="num util-low">6.67%</td><td class="num util-low">1.67%</td><td class="num util-low">0.00%</td><td class="num">N/A</td><td class="num util-low">0.00%</td><td class="num util-low">0.00%</td><td class="num util-low">0.00%</td></tr>
       </tbody>
     </table>
   </div>
@@ -233,6 +237,10 @@ tr.total-row td {
   <div class="card">
     <div class="sec">FUNNEL BREAKDOWN</div>
     <table>
+      <colgroup>
+        <col style="width:150px">
+        <col span="10">
+      </colgroup>
       <thead><tr>
         <th>Funnel</th>
         <th class="col-date today">► TODAY<br>03/02</th><th class="col-date">TUE<br>03/03</th><th class="col-date">WED<br>03/04</th><th class="col-date">THU<br>03/05</th><th class="col-date">FRI<br>03/06</th><th class="col-date">SAT<br>03/07</th><th class="col-date">SUN<br>03/08</th><th class="col-date">MON<br>03/09</th><th class="col-date">TUE<br>03/10</th><th class="col-date">WED<br>03/11</th>
@@ -241,7 +249,7 @@ tr.total-row td {
         <tr><td class="label">Instagram</td><td class="num booked today">8</td><td class="num booked">9</td><td class="num zero">0</td><td class="num booked">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
 <tr><td class="label">Instagram Setter</td><td class="num booked today">4</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
 <tr><td class="label">Internal Webinar</td><td class="num booked today">4</td><td class="num booked">3</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
-<tr><td class="label">Low Ticket Funnel</td><td class="num booked today">13</td><td class="num booked">8</td><td class="num booked">4</td><td class="num booked">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
+<tr><td class="label">Low Ticket Funnel</td><td class="num booked today">13</td><td class="num booked">8</td><td class="num booked">3</td><td class="num booked">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
 <tr><td class="label">Meta Ads</td><td class="num booked today">2</td><td class="num booked">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
 <tr><td class="label">No Attribution</td><td class="num zero today">0</td><td class="num booked">2</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
 <tr><td class="label">Unknown</td><td class="num booked today">3</td><td class="num booked">7</td><td class="num booked">2</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
@@ -251,7 +259,7 @@ tr.total-row td {
 
         <tr class="total-row">
           <td class="metric">TOTAL</td>
-          <td class="num total-num today">48</td><td class="num total-num">40</td><td class="num total-num">11</td><td class="num total-num">4</td><td class="num total-num">1</td><td class="num total-num">0</td><td class="num total-num">0</td><td class="num total-num">0</td><td class="num total-num">0</td><td class="num total-num">0</td>
+          <td class="num total-num today">48</td><td class="num total-num">40</td><td class="num total-num">10</td><td class="num total-num">4</td><td class="num total-num">1</td><td class="num total-num">0</td><td class="num total-num">0</td><td class="num total-num">0</td><td class="num total-num">0</td><td class="num total-num">0</td>
         </tr>
       </tbody>
     </table>
@@ -283,7 +291,7 @@ tr.total-row td {
   </div>
 
   <div class="footer">
-    <span>Classification: 104 included · 155 excluded · 11 unclassified</span>
+    <span>Classification: 103 included · 156 excluded · 11 unclassified</span>
     <a href="https://anthony-funnel-reporting-mtd.tiiny.site/" target="_blank">📊 MTD Funnel Reporting →</a>
   </div>
 
