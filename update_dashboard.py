@@ -416,6 +416,7 @@ body {{
 table {{
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
 }}
 
 th {{
@@ -432,7 +433,6 @@ th {{
 th:first-child {{
   text-align: left;
   padding-left: 0.6rem;
-  min-width: 120px;
 }}
 
 td {{
@@ -549,6 +549,10 @@ tr.total-row td {{
   <div class="card">
     <div class="sec">CAPACITY METRICS</div>
     <table>
+      <colgroup>
+        <col style="width:150px">
+        <col span="10">
+      </colgroup>
       <thead><tr>
         <th></th>
         {date_headers}
@@ -565,6 +569,10 @@ tr.total-row td {{
   <div class="card">
     <div class="sec">FUNNEL BREAKDOWN</div>
     <table>
+      <colgroup>
+        <col style="width:150px">
+        <col span="10">
+      </colgroup>
       <thead><tr>
         <th>Funnel</th>
         {date_headers}
