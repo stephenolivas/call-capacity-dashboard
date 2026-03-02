@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """
-Call Capacity Dashboard Generator (v8 — Single Meeting Fetch + Python Filtering)
+Call Capacity Dashboard Generator (v9)
 
-Key insight from v7 logs: Close API's date_start__gte/date_start__lt params are
-silently ignored on the activity/meeting endpoint, so it returns ALL meetings.
+Classification rules based on SLT_Classifier_Rules.docx:
+- INCLUDE-based: only meetings matching known first-call title patterns are counted
+- 4 excluded users: Kristin Nelson, Spencer Reynolds, Stephen Olivas, Ahmad Bukhari
+- No reschedule check (First Call Booked Date is unreliable per doc)
+- No existing-customer check (not in doc spec)
+- Title classification follows Steps 1-6 from the doc
 
-Solution: Fetch ALL meetings ONCE, then filter by date in Python. This single
-dataset serves both the 10-day window AND the existing-customer check.
-Leads are fetched individually with _fields (only for the ~200-400 unique leads
-actually in the 10-day window, not the inflated 5,420 from unfiltered results).
-
-Estimated: ~107 meeting pages + ~200-400 lead fetches = 5-8 minutes.
+UI: Light cream theme matching existing capacity-10day-dashboard.tiiny.site
 """
 
 import os
@@ -31,36 +30,98 @@ UTC = ZoneInfo("UTC")
 
 CAPACITY = {0: 44, 1: 47, 2: 47, 3: 47, 4: 47, 5: 4, 6: 0}
 
+# 4 excluded users per SLT doc
 EXCLUDED_USER_IDS = {
     "user_EmhqCmaHERTfgfWnPADiLGEqQw3ENvRYd3u1VEmblIp",  # Kristin Nelson
     "user_4sfuKGMbv0LQZ4hpS8ipASv406kKTSNP5Xx79jOwSqM",  # Spencer Reynolds
+    "user_5cZRqXu8kb4O1IeBVA98UMcMEhYZUhx1fnCHfSL0YMV",  # Stephen Olivas
+    "user_yRF070m26JE67J6CJqzkAB3IqY7btNm1K5RisCglKa6",  # Ahmad Bukhari
 }
 
-EXCLUDED_TITLE_PATTERNS = [
-    r"\bfollow\b",
-    r"\bf/u\b",
-    r"\bfollow[\s\-]?up\b",
-    r"\bnext\s+steps\b",
-    r"\brescheduled\b",
-    r"\banthony'?s?\s+q\s*&\s*a\b",
-    r"^test$",
-    r"\bcanceled\b",
-]
-EXCLUDED_TITLE_RE = re.compile("|".join(EXCLUDED_TITLE_PATTERNS), re.IGNORECASE)
-
-FIELD_FIRST_CALL_BOOKED_DATE = "custom.cf_JsJZIVh7QDcFQBXr4cTRBxf1AkREpLdsKiZB4AEJ8Xh"
 FIELD_FUNNEL_NAME_DEAL = "custom.cf_xqDQE8fkPsWa0RNEve7hcaxKblCe6489XeZGRDzyPdX"
 
 LEAD_FIELDS = ",".join([
     "id", "display_name", "name",
-    FIELD_FIRST_CALL_BOOKED_DATE,
     FIELD_FUNNEL_NAME_DEAL,
 ])
 
-EXISTING_CUSTOMER_CUTOFF_DATE = date.fromisoformat("2026-01-01")
 OUTPUT_FILE = os.environ.get("OUTPUT_FILE", "index.html")
-
 API_THROTTLE = 0.5
+
+
+# ─── Title Classification (SLT Doc Steps 1-6) ───────────────────────────────
+
+# Step 3: Exclude patterns
+EXCLUDE_FOLLOW_UP_RE = re.compile(
+    r"follow[\s\-]?up|fallow\s+up|\bf/?u\b|next\s+steps|rescheduled|reschedule",
+    re.IGNORECASE
+)
+
+# Step 5: Known first-call INCLUDE patterns
+INCLUDE_PATTERNS_RE = re.compile(
+    r"vending\s+strategy\s+call"
+    r"|vendingpren[eu]+rs?\s+consultation"
+    r"|vendingpren[eu]+rs?\s+strategy\s+call"
+    r"|new\s+vendingpreneur\s+strategy\s+call",
+    re.IGNORECASE
+)
+
+# Step 6: Ambiguous-but-INCLUDE patterns
+INCLUDE_AMBIGUOUS_RE = re.compile(
+    r"vending\s+consult"
+    r"|vendingpren[eu]+rs?\s+w[\s/]"
+    r"|vendingpren[eu]+rs?\s+call"
+    r"|meet\s+with"
+    r"|intro\s+call",
+    re.IGNORECASE
+)
+
+# Step 6: Ambiguous-but-EXCLUDE patterns
+EXCLUDE_AMBIGUOUS_RE = re.compile(
+    r"\benrollment\b|silver\s+start\s+up|bronze\s+enrollment"
+    r"|questions\s+on\s+enrollment",
+    re.IGNORECASE
+)
+
+
+def classify_meeting_title(title):
+    """
+    Classify a meeting title per SLT doc Steps 1-6.
+    Returns 'include', 'exclude', or 'exclude_other'.
+    """
+    if not title:
+        return "exclude_other"
+
+    # Step 1: Exclude if starts with "Canceled:"
+    if title.strip().lower().startswith("canceled:"):
+        return "exclude"
+
+    # Step 2: Exclude Kristin's Discovery Calls
+    if "vending quick discovery" in title.lower():
+        return "exclude"
+
+    # Step 3: Exclude follow-ups, F/U, next steps, rescheduled
+    if EXCLUDE_FOLLOW_UP_RE.search(title):
+        return "exclude"
+
+    # Step 4: Exclude Anthony's Q&A
+    if "anthony" in title.lower() and "q&a" in title.lower():
+        return "exclude"
+
+    # Step 6 excludes (check before includes to avoid false positives)
+    if EXCLUDE_AMBIGUOUS_RE.search(title):
+        return "exclude"
+
+    # Step 5: Known first-call patterns → INCLUDE
+    if INCLUDE_PATTERNS_RE.search(title):
+        return "include"
+
+    # Step 6: Ambiguous-but-include patterns → INCLUDE
+    if INCLUDE_AMBIGUOUS_RE.search(title):
+        return "include"
+
+    # Everything else → excluded (not a recognized first call)
+    return "exclude_other"
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -97,54 +158,15 @@ def close_get(endpoint, params=None):
     resp.raise_for_status()
 
 
-# ─── Date Parsing ────────────────────────────────────────────────────────────
-
-def parse_meeting_datetime_utc(meeting):
-    """Parse meeting start time to a UTC datetime."""
+def parse_meeting_date_pacific(meeting):
     raw = meeting.get("starts_at") or meeting.get("activity_at") or meeting.get("date_start")
     if not raw or not isinstance(raw, str):
         return None
     try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return dt.astimezone(PACIFIC).date()
     except (ValueError, TypeError):
         return None
-
-
-def parse_meeting_date_pacific(meeting):
-    """Parse meeting start time to a Pacific date."""
-    dt = parse_meeting_datetime_utc(meeting)
-    if not dt:
-        return None
-    return dt.astimezone(PACIFIC).date()
-
-
-# ─── Exclusion Logic ─────────────────────────────────────────────────────────
-
-def is_excluded_by_title(title):
-    if not title:
-        return False
-    return bool(EXCLUDED_TITLE_RE.search(title))
-
-
-def is_excluded_by_user(user_id, users_list):
-    if user_id in EXCLUDED_USER_IDS:
-        return True
-    if users_list:
-        for uid in users_list:
-            if uid in EXCLUDED_USER_IDS:
-                return True
-    return False
-
-
-def is_reschedule(lead_data, meeting_date):
-    fcbd_raw = lead_data.get(FIELD_FIRST_CALL_BOOKED_DATE)
-    if not fcbd_raw:
-        return False
-    try:
-        fcbd = date.fromisoformat(str(fcbd_raw))
-    except (ValueError, TypeError):
-        return False
-    return fcbd < meeting_date
 
 
 # ─── Main Pipeline ───────────────────────────────────────────────────────────
@@ -157,11 +179,10 @@ def run_pipeline():
     today = datetime.now(PACIFIC).date()
     end_date = today + timedelta(days=10)
     log(f"📅 Date range: {today} to {end_date} (Pacific)")
-    log(f"📅 Existing-customer cutoff: {EXISTING_CUSTOMER_CUTOFF_DATE}")
 
-    # ── Step 1: Fetch ALL meetings from Close (one paginated scan) ──
+    # Step 1: Fetch ALL meetings
     step_start = time.time()
-    log("📥 Step 1/6: Fetching ALL meetings from Close (single paginated scan)...")
+    log("📥 Step 1/4: Fetching all meetings...")
     all_meetings = []
     skip = 0
     limit = 100
@@ -174,55 +195,53 @@ def run_pipeline():
         if not data.get("has_more", False):
             break
         skip += limit
-    log(f"   ✓ {len(all_meetings)} total meetings fetched [{elapsed_since(step_start)}]")
+    log(f"   ✓ {len(all_meetings)} total meetings [{elapsed_since(step_start)}]")
 
-    # ── Step 2: Filter + classify in Python ──
+    # Step 2: Filter to 10-day window + classify titles
     step_start = time.time()
-    log("🔍 Step 2/6: Filtering meetings by date and applying local exclusions...")
+    log("🔍 Step 2/4: Filtering to window + classifying titles...")
 
-    # Build existing-customer set: leads with completed meetings before cutoff
-    existing_customer_leads = set()
-    for m in all_meetings:
-        if m.get("status") == "completed":
-            d = parse_meeting_date_pacific(m)
-            if d and d < EXISTING_CUSTOMER_CUTOFF_DATE and m.get("lead_id"):
-                existing_customer_leads.add(m["lead_id"])
-    log(f"   Found {len(existing_customer_leads)} leads with completed meetings before {EXISTING_CUSTOMER_CUTOFF_DATE}")
-
-    # Filter to 10-day window + apply local exclusions
+    classified = {"include": 0, "exclude": 0, "exclude_other": 0, "user_excluded": 0, "out_of_range": 0}
     meetings_in_window = []
+
     for m in all_meetings:
-        # Date filter (Python-side since API doesn't support it reliably)
         meeting_date = parse_meeting_date_pacific(m)
-        if not meeting_date:
-            continue
-        if meeting_date < today or meeting_date >= end_date:
-            continue
-
-        # Local exclusions
-        if is_excluded_by_title(m.get("title", "")):
-            continue
-        if is_excluded_by_user(m.get("user_id", ""), m.get("users", [])):
-            continue
-        if m.get("status") in ("canceled", "declined-by-org", "declined-by-lead"):
-            continue
-        if not m.get("lead_id"):
+        if not meeting_date or meeting_date < today or meeting_date >= end_date:
+            classified["out_of_range"] += 1
             continue
 
-        m["_meeting_date"] = meeting_date
-        meetings_in_window.append(m)
+        # User exclusion
+        user_id = m.get("user_id", "")
+        users_list = m.get("users", [])
+        if user_id in EXCLUDED_USER_IDS or any(u in EXCLUDED_USER_IDS for u in (users_list or [])):
+            classified["user_excluded"] += 1
+            continue
 
-    unique_lead_ids = set(m["lead_id"] for m in meetings_in_window)
-    log(f"   ✓ {len(meetings_in_window)} meetings in window ({len(unique_lead_ids)} unique leads) [{elapsed_since(step_start)}]")
+        # Title classification
+        title = m.get("title", "")
+        classification = classify_meeting_title(title)
+        classified[classification] += 1
 
-    # ── Step 3: Fetch only the leads we need (with _fields) ──
+        if classification == "include":
+            m["_meeting_date"] = meeting_date
+            meetings_in_window.append(m)
+
+    log(f"   Classification results:")
+    log(f"     Out of date range: {classified['out_of_range']}")
+    log(f"     User excluded: {classified['user_excluded']}")
+    log(f"     Title INCLUDE: {classified['include']}")
+    log(f"     Title EXCLUDE: {classified['exclude']}")
+    log(f"     Title EXCLUDE_OTHER: {classified['exclude_other']}")
+    log(f"   ✓ {len(meetings_in_window)} first calls in window [{elapsed_since(step_start)}]")
+
+    # Step 3: Fetch leads for funnel data
     step_start = time.time()
-    lead_ids_list = list(unique_lead_ids)
-    log(f"📥 Step 3/6: Fetching {len(lead_ids_list)} leads (slim _fields mode)...")
+    unique_lead_ids = list(set(m["lead_id"] for m in meetings_in_window if m.get("lead_id")))
+    log(f"📥 Step 3/4: Fetching {len(unique_lead_ids)} leads...")
     lead_cache = {}
-    for i, lid in enumerate(lead_ids_list, 1):
-        if i % 20 == 0 or i == len(lead_ids_list):
-            log(f"   ... {i}/{len(lead_ids_list)} leads fetched ({_api_call_count} API calls)")
+    for i, lid in enumerate(unique_lead_ids, 1):
+        if i % 20 == 0 or i == len(unique_lead_ids):
+            log(f"   ... {i}/{len(unique_lead_ids)} leads ({_api_call_count} API calls)")
         try:
             lead_cache[lid] = close_get(f"lead/{lid}", {"_fields": LEAD_FIELDS})
         except requests.HTTPError as e:
@@ -230,41 +249,19 @@ def run_pipeline():
             lead_cache[lid] = None
     log(f"   ✓ All leads fetched [{elapsed_since(step_start)}]")
 
-    # ── Step 4: Apply reschedule exclusion ──
+    # Step 4: Build final results
     step_start = time.time()
-    log("🔍 Step 4/6: Applying reschedule exclusion...")
-    pre = len(meetings_in_window)
-    meetings_in_window = [
-        m for m in meetings_in_window
-        if lead_cache.get(m["lead_id"]) and not is_reschedule(lead_cache[m["lead_id"]], m["_meeting_date"])
-    ]
-    log(f"   ✓ {pre} → {len(meetings_in_window)} (removed {pre - len(meetings_in_window)}) [{elapsed_since(step_start)}]")
-
-    # ── Step 5: Apply existing-customer exclusion ──
-    step_start = time.time()
-    log("🔍 Step 5/6: Applying existing-customer exclusion...")
-    pre = len(meetings_in_window)
-    meetings_in_window = [
-        m for m in meetings_in_window
-        if m["lead_id"] not in existing_customer_leads
-    ]
-    log(f"   ✓ {pre} → {len(meetings_in_window)} (removed {pre - len(meetings_in_window)} existing customers) [{elapsed_since(step_start)}]")
-
-    # ── Step 6: Build final results ──
-    step_start = time.time()
-    log("📊 Step 6/6: Building dashboard data...")
+    log("📊 Step 4/4: Building dashboard data...")
     valid_meetings = []
     for m in meetings_in_window:
-        lead_id = m["lead_id"]
-        lead_data = lead_cache.get(lead_id)
-        if not lead_data:
-            continue
-        funnel = lead_data.get(FIELD_FUNNEL_NAME_DEAL) or "Unknown"
+        lead_id = m.get("lead_id")
+        lead_data = lead_cache.get(lead_id) if lead_id else None
+        funnel = (lead_data.get(FIELD_FUNNEL_NAME_DEAL) if lead_data else None) or "Unknown"
         valid_meetings.append({
             "date": m["_meeting_date"],
             "title": m.get("title", ""),
-            "lead_id": lead_id,
-            "lead_name": lead_data.get("display_name") or lead_data.get("name", "Unknown"),
+            "lead_id": lead_id or "",
+            "lead_name": (lead_data.get("display_name") or lead_data.get("name", "Unknown")) if lead_data else "Unknown",
             "funnel": funnel,
         })
 
@@ -296,85 +293,85 @@ def run_pipeline():
         "daily_data": daily_data,
         "funnels": funnels_sorted,
         "valid_meetings": valid_meetings,
-        "last_updated": now_pacific.strftime("%b %d, %Y at %I:%M %p %Z"),
+        "last_updated": now_pacific.strftime("%I:%M %p %Z"),
+        "last_updated_date": now_pacific.strftime("%A, %B %-d, %Y"),
+        "today": today,
     }
 
 
-# ─── HTML Generation ────────────────────────────────────────────────────────
+# ─── HTML Generation (Light Cream Theme) ────────────────────────────────────
 
 def generate_html(data):
     dates = data["dates"]
     daily = data["daily_data"]
     funnels = data["funnels"]
     last_updated = data["last_updated"]
+    last_updated_date = data["last_updated_date"]
+    today = data["today"]
 
-    labels_json = json.dumps([d.strftime("%a %m/%d") for d in dates])
-    booked_json = json.dumps([daily[d]["booked"] for d in dates])
-    capacity_json = json.dumps([daily[d]["capacity"] for d in dates])
-    util_pcts = []
+    # Build date column headers
+    date_headers = ""
     for d in dates:
+        is_today = d == today
+        day_label = "► TODAY" if is_today else d.strftime("%a").upper()
+        date_str = d.strftime("%m/%d")
+        cls = ' class="today-col"' if is_today else ""
+        date_headers += f"<th{cls}>{day_label}<br>{date_str}</th>"
+
+    # Capacity metrics rows
+    cap_row = ""
+    booked_row = ""
+    avail_row = ""
+    util_row = ""
+    for d in dates:
+        is_today = d == today
+        cls = ' class="today-col"' if is_today else ""
         cap = daily[d]["capacity"]
         bk = daily[d]["booked"]
-        util_pcts.append(round(bk / cap * 100, 1) if cap > 0 else 0)
-    util_json = json.dumps(util_pcts)
+        avail = cap - bk if cap > 0 else "–"
+        pct = round(bk / cap * 100, 2) if cap > 0 else None
+        pct_str = f"{pct:.2f}%" if pct is not None else "N/A"
 
+        if pct is not None:
+            if pct >= 80:
+                pct_class = "util-high"
+            elif pct >= 50:
+                pct_class = "util-mid"
+            else:
+                pct_class = "util-low"
+        else:
+            pct_class = ""
+
+        cap_row += f"<td{cls}>{cap if cap > 0 else '–'}</td>"
+        bk_class = "booked-val"
+        booked_row += f'<td{cls} class="{bk_class}">{bk}</td>'
+        avail_row += f"<td{cls}>{avail}</td>"
+        util_row += f'<td{cls} class="{pct_class}">{pct_str}</td>'
+
+    # Funnel breakdown rows
     funnel_rows_html = ""
     for funnel in funnels:
         cells = ""
-        row_total = 0
         for d in dates:
+            is_today = d == today
+            cls = ' class="today-col"' if is_today else ""
             count = daily[d]["funnels"].get(funnel, 0)
-            row_total += count
-            cell_class = "cell-zero" if count == 0 else "cell-active"
-            cells += f'<td class="{cell_class}">{count}</td>'
+            val = str(count) if count > 0 else "0"
+            bold = " style='font-weight:700;color:#b45309;'" if count > 0 and is_today else (" style='font-weight:600;'" if count > 0 else "")
+            cells += f"<td{cls}{bold}>{val}</td>"
         funnel_rows_html += f"""
         <tr>
             <td class="funnel-name">{funnel}</td>
             {cells}
-            <td class="cell-total">{row_total}</td>
         </tr>"""
 
-    totals_cells = ""
-    grand_total = 0
+    # Totals row for funnel section
+    funnel_totals = ""
     for d in dates:
+        is_today = d == today
+        cls = ' class="today-col"' if is_today else ""
         t = daily[d]["booked"]
-        grand_total += t
-        totals_cells += f'<td class="cell-total">{t}</td>'
-    totals_row = f"""
-    <tr class="totals-row">
-        <td class="funnel-name">TOTAL</td>
-        {totals_cells}
-        <td class="cell-total">{grand_total}</td>
-    </tr>"""
-
-    cap_cells = ""
-    for d in dates:
-        cap_cells += f'<td class="cell-cap">{daily[d]["capacity"]}</td>'
-    cap_row = f"""
-    <tr class="cap-row">
-        <td class="funnel-name">Capacity</td>
-        {cap_cells}
-        <td class="cell-cap">—</td>
-    </tr>"""
-
-    util_cells = ""
-    for d in dates:
-        cap = daily[d]["capacity"]
-        bk = daily[d]["booked"]
-        pct = round(bk / cap * 100, 1) if cap > 0 else 0
-        color_class = "util-low" if pct < 50 else ("util-mid" if pct < 80 else "util-high")
-        util_cells += f'<td class="{color_class}">{pct}%</td>'
-    util_row = f"""
-    <tr class="util-row">
-        <td class="funnel-name">Utilization</td>
-        {util_cells}
-        <td class="cell-cap">—</td>
-    </tr>"""
-
-    date_headers = ""
-    for d in dates:
-        day_label = d.strftime("%a<br>%m/%d")
-        date_headers += f"<th>{day_label}</th>"
+        funnel_totals += f'<td{cls} style="font-weight:700;">{t}</td>'
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -382,193 +379,180 @@ def generate_html(data):
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Call Capacity Dashboard</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.7/chart.umd.min.js"></script>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,500;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
   :root {{
-    --bg: #0b0f1a;
-    --surface: #121829;
-    --surface-2: #1a2238;
-    --border: #232d45;
-    --text: #e2e8f0;
-    --text-dim: #8494b2;
-    --accent: #6366f1;
-    --accent-light: #818cf8;
-    --green: #22c55e;
-    --amber: #f59e0b;
-    --red: #ef4444;
-    --cyan: #06b6d4;
+    --bg: #faf8f5;
+    --surface: #ffffff;
+    --border: #e5e0d8;
+    --border-light: #f0ece6;
+    --text: #1a1a1a;
+    --text-dim: #6b6560;
+    --text-muted: #9a9490;
+    --accent: #2d7a4f;
+    --accent-bg: #e8f5ee;
+    --green: #16a34a;
+    --amber: #b45309;
+    --red: #dc2626;
+    --today-bg: #fef9ee;
+    --today-border: #f0e4c8;
+    --section-accent: #2d7a4f;
   }}
 
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 
   body {{
-    font-family: 'DM Sans', -apple-system, sans-serif;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
     background: var(--bg);
     color: var(--text);
     min-height: 100vh;
-    padding: 2rem;
+    padding: 1.5rem 2rem;
   }}
 
   .dashboard {{
-    max-width: 1280px;
+    max-width: 1400px;
     margin: 0 auto;
   }}
 
   .header {{
     display: flex;
     justify-content: space-between;
-    align-items: flex-end;
+    align-items: flex-start;
     margin-bottom: 2rem;
-    padding-bottom: 1.5rem;
-    border-bottom: 1px solid var(--border);
+    padding-bottom: 1rem;
+    border-bottom: 2px solid var(--border);
   }}
-  .header h1 {{
-    font-size: 1.75rem;
+  .header-left h1 {{
+    font-size: 1.5rem;
     font-weight: 700;
-    letter-spacing: -0.025em;
-    background: linear-gradient(135deg, var(--accent-light), var(--cyan));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
   }}
-  .header .subtitle {{
-    font-size: 0.85rem;
+  .header-left .subtitle {{
+    font-size: 0.8rem;
     color: var(--text-dim);
     margin-top: 0.25rem;
   }}
-  .updated {{
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.75rem;
-    color: var(--text-dim);
+  .header-right {{
     text-align: right;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
   }}
-  .updated .pulse {{
+  .header-right .date {{
+    font-weight: 600;
+    color: var(--text);
+  }}
+  .header-right .time {{
+    color: var(--text-dim);
+    font-size: 0.75rem;
+  }}
+  .status-dot {{
     display: inline-block;
-    width: 6px; height: 6px;
+    width: 7px; height: 7px;
     background: var(--green);
     border-radius: 50%;
-    margin-right: 6px;
-    animation: pulse 2s infinite;
-  }}
-  @keyframes pulse {{
-    0%, 100% {{ opacity: 1; }}
-    50% {{ opacity: 0.3; }}
+    margin-right: 4px;
+    vertical-align: middle;
   }}
 
-  .summary-row {{
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 1rem;
-    margin-bottom: 2rem;
-  }}
-  .card {{
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 1.25rem;
-  }}
-  .card .label {{
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-dim);
-    margin-bottom: 0.5rem;
-  }}
-  .card .value {{
-    font-size: 1.75rem;
+  .section-label {{
+    font-size: 0.7rem;
     font-weight: 700;
-    font-family: 'JetBrains Mono', monospace;
-  }}
-  .card .value.green {{ color: var(--green); }}
-  .card .value.amber {{ color: var(--amber); }}
-  .card .value.red   {{ color: var(--red); }}
-  .card .value.cyan  {{ color: var(--cyan); }}
-
-  .chart-container {{
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--section-accent);
+    padding: 0.75rem 1rem 0.4rem;
     background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 1.5rem;
-    margin-bottom: 2rem;
-  }}
-  .chart-container h2 {{
-    font-size: 1rem;
-    font-weight: 500;
-    margin-bottom: 1rem;
-    color: var(--text-dim);
-  }}
-  .chart-wrap {{
-    position: relative;
-    height: 320px;
+    border-left: 3px solid var(--section-accent);
   }}
 
-  .table-container {{
+  .table-wrap {{
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 1.5rem;
+    border-radius: 8px;
     overflow-x: auto;
+    margin-bottom: 1.5rem;
   }}
-  .table-container h2 {{
-    font-size: 1rem;
-    font-weight: 500;
-    margin-bottom: 1rem;
-    color: var(--text-dim);
-  }}
+
   table {{
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.85rem;
+    font-size: 0.82rem;
   }}
   th {{
-    padding: 0.6rem 0.75rem;
+    padding: 0.65rem 0.8rem;
     text-align: center;
-    font-weight: 500;
+    font-weight: 600;
     color: var(--text-dim);
     border-bottom: 2px solid var(--border);
+    font-size: 0.75rem;
     white-space: nowrap;
-    font-size: 0.8rem;
+    background: var(--surface);
   }}
   th:first-child {{
     text-align: left;
-    min-width: 180px;
+    min-width: 140px;
+    padding-left: 1rem;
   }}
   td {{
-    padding: 0.55rem 0.75rem;
+    padding: 0.5rem 0.8rem;
     text-align: center;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-light);
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.8rem;
-  }}
-  .funnel-name {{
-    text-align: left !important;
-    font-family: 'DM Sans', sans-serif;
     font-weight: 500;
+  }}
+  td:first-child {{
+    text-align: left;
+    font-family: 'Inter', sans-serif;
+    font-weight: 500;
+    padding-left: 1rem;
+    color: var(--text);
+  }}
+
+  .today-col {{
+    background: var(--today-bg) !important;
+    border-left: 1px solid var(--today-border);
+    border-right: 1px solid var(--today-border);
+  }}
+  th.today-col {{
+    background: var(--today-bg) !important;
+    color: var(--amber);
+    font-weight: 700;
+  }}
+
+  .metric-label {{
+    font-weight: 600;
+    color: var(--text);
+  }}
+  .booked-val {{
+    color: var(--accent);
+    font-weight: 600;
+  }}
+  .util-low {{ color: var(--green); font-weight: 600; }}
+  .util-mid {{ color: var(--amber); font-weight: 600; }}
+  .util-high {{ color: var(--red); font-weight: 600; }}
+
+  .funnel-name {{
+    font-size: 0.78rem;
+    color: var(--text);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 200px;
+    max-width: 180px;
   }}
-  .cell-zero {{ color: var(--text-dim); opacity: 0.4; }}
-  .cell-active {{ color: var(--accent-light); font-weight: 500; }}
-  .cell-total {{ font-weight: 700; color: var(--text); }}
-  .cell-cap {{ color: var(--text-dim); }}
-  .totals-row td {{
-    border-top: 2px solid var(--accent);
-    border-bottom: 1px solid var(--border);
-    background: rgba(99, 102, 241, 0.06);
-  }}
-  .cap-row td {{ color: var(--text-dim); }}
-  .util-row td {{ font-weight: 700; }}
-  .util-low  {{ color: var(--green); }}
-  .util-mid  {{ color: var(--amber); }}
-  .util-high {{ color: var(--red); }}
 
-  @media (max-width: 768px) {{
-    body {{ padding: 1rem; }}
-    .summary-row {{ grid-template-columns: repeat(2, 1fr); }}
-    .header {{ flex-direction: column; align-items: flex-start; gap: 0.5rem; }}
+  tr.totals-row td {{
+    border-top: 2px solid var(--border);
+    font-weight: 700;
+    color: var(--text);
+  }}
+
+  @media (max-width: 900px) {{
+    body {{ padding: 0.75rem; }}
   }}
 </style>
 </head>
@@ -576,136 +560,66 @@ def generate_html(data):
 <div class="dashboard">
 
   <div class="header">
-    <div>
-      <h1>Call Capacity Dashboard</h1>
-      <div class="subtitle">10-Day Rolling Window — First Strategy Call Bookings vs. Capacity</div>
+    <div class="header-left">
+      <h1>📞 Call Capacity Dashboard</h1>
+      <div class="subtitle">10-Day Lookahead · First Meetings Only</div>
     </div>
-    <div class="updated">
-      <span class="pulse"></span> Last updated<br>
-      <strong>{last_updated}</strong>
-    </div>
-  </div>
-
-  <div class="summary-row" id="summaryCards"></div>
-
-  <div class="chart-container">
-    <h2>Daily Bookings vs. Capacity</h2>
-    <div class="chart-wrap">
-      <canvas id="capacityChart"></canvas>
+    <div class="header-right">
+      <div class="date"><span class="status-dot"></span>{last_updated_date}</div>
+      <div class="time">Last updated: {last_updated}</div>
     </div>
   </div>
 
-  <div class="table-container">
-    <h2>Funnel Breakdown</h2>
+  <div class="table-wrap">
+    <div class="section-label">CAPACITY METRICS</div>
+    <table>
+      <thead>
+        <tr>
+          <th></th>
+          {date_headers}
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="metric-label">Capacity</td>
+          {cap_row}
+        </tr>
+        <tr>
+          <td class="metric-label">Booked</td>
+          {booked_row}
+        </tr>
+        <tr>
+          <td class="metric-label">Available</td>
+          {avail_row}
+        </tr>
+        <tr>
+          <td class="metric-label">Utilization %</td>
+          {util_row}
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="table-wrap">
+    <div class="section-label">FUNNEL BREAKDOWN</div>
     <table>
       <thead>
         <tr>
           <th>Funnel</th>
           {date_headers}
-          <th>Total</th>
         </tr>
       </thead>
       <tbody>
         {funnel_rows_html}
-        {totals_row}
-        {cap_row}
-        {util_row}
+        <tr class="totals-row">
+          <td class="metric-label">TOTAL</td>
+          {funnel_totals}
+        </tr>
       </tbody>
     </table>
   </div>
 
 </div>
-
-<script>
-const labels   = {labels_json};
-const booked   = {booked_json};
-const capacity = {capacity_json};
-const util     = {util_json};
-
-const totalBooked   = booked.reduce((a,b) => a+b, 0);
-const totalCapacity = capacity.reduce((a,b) => a+b, 0);
-const avgUtil       = totalCapacity > 0 ? (totalBooked / totalCapacity * 100).toFixed(1) : 0;
-const peakUtil      = Math.max(...util).toFixed(1);
-
-const cards = [
-  {{ label: 'Total Booked', value: totalBooked, cls: 'cyan' }},
-  {{ label: 'Total Capacity', value: totalCapacity, cls: '' }},
-  {{ label: 'Avg Utilization', value: avgUtil + '%', cls: parseFloat(avgUtil) >= 80 ? 'red' : parseFloat(avgUtil) >= 50 ? 'amber' : 'green' }},
-  {{ label: 'Peak Utilization', value: peakUtil + '%', cls: parseFloat(peakUtil) >= 80 ? 'red' : parseFloat(peakUtil) >= 50 ? 'amber' : 'green' }},
-];
-
-const cardsContainer = document.getElementById('summaryCards');
-cards.forEach(c => {{
-  cardsContainer.innerHTML += `
-    <div class="card">
-      <div class="label">${{c.label}}</div>
-      <div class="value ${{c.cls}}">${{c.value}}</div>
-    </div>`;
-}});
-
-const ctx = document.getElementById('capacityChart').getContext('2d');
-new Chart(ctx, {{
-  type: 'bar',
-  data: {{
-    labels: labels,
-    datasets: [
-      {{
-        label: 'Booked',
-        data: booked,
-        backgroundColor: booked.map((b, i) => {{
-          const pct = capacity[i] > 0 ? b / capacity[i] : 0;
-          return pct >= 0.8 ? 'rgba(239,68,68,0.75)' : pct >= 0.5 ? 'rgba(245,158,11,0.75)' : 'rgba(34,197,94,0.75)';
-        }}),
-        borderRadius: 6,
-        barPercentage: 0.6,
-        order: 2,
-      }},
-      {{
-        label: 'Capacity',
-        data: capacity,
-        type: 'line',
-        borderColor: 'rgba(99,102,241,0.6)',
-        borderWidth: 2,
-        borderDash: [6, 4],
-        pointBackgroundColor: 'rgba(99,102,241,0.8)',
-        pointRadius: 4,
-        fill: false,
-        order: 1,
-      }}
-    ]
-  }},
-  options: {{
-    responsive: true,
-    maintainAspectRatio: false,
-    interaction: {{ mode: 'index', intersect: false }},
-    plugins: {{
-      legend: {{
-        labels: {{ color: '#8494b2', font: {{ family: "'DM Sans', sans-serif" }} }}
-      }},
-      tooltip: {{
-        callbacks: {{
-          afterBody: function(context) {{
-            const i = context[0].dataIndex;
-            const pct = capacity[i] > 0 ? (booked[i] / capacity[i] * 100).toFixed(1) : 0;
-            return 'Utilization: ' + pct + '%';
-          }}
-        }}
-      }}
-    }},
-    scales: {{
-      x: {{
-        ticks: {{ color: '#8494b2', font: {{ family: "'DM Sans', sans-serif", size: 11 }} }},
-        grid: {{ color: 'rgba(35,45,69,0.5)' }}
-      }},
-      y: {{
-        beginAtZero: true,
-        ticks: {{ color: '#8494b2', font: {{ family: "'JetBrains Mono', monospace", size: 11 }}, stepSize: 10 }},
-        grid: {{ color: 'rgba(35,45,69,0.5)' }}
-      }}
-    }}
-  }}
-}});
-</script>
 </body>
 </html>"""
 
@@ -720,7 +634,7 @@ def main():
         sys.exit(1)
 
     start_time = time.time()
-    log("🚀 Starting Call Capacity Dashboard update (v8)...")
+    log("🚀 Starting Call Capacity Dashboard update (v9 — SLT Rules)...")
     data = run_pipeline()
 
     log("📄 Generating HTML...")
