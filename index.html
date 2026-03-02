@@ -4,193 +4,180 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Call Capacity Dashboard</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.7/chart.umd.min.js"></script>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,500;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
   :root {
-    --bg: #0b0f1a;
-    --surface: #121829;
-    --surface-2: #1a2238;
-    --border: #232d45;
-    --text: #e2e8f0;
-    --text-dim: #8494b2;
-    --accent: #6366f1;
-    --accent-light: #818cf8;
-    --green: #22c55e;
-    --amber: #f59e0b;
-    --red: #ef4444;
-    --cyan: #06b6d4;
+    --bg: #faf8f5;
+    --surface: #ffffff;
+    --border: #e5e0d8;
+    --border-light: #f0ece6;
+    --text: #1a1a1a;
+    --text-dim: #6b6560;
+    --text-muted: #9a9490;
+    --accent: #2d7a4f;
+    --accent-bg: #e8f5ee;
+    --green: #16a34a;
+    --amber: #b45309;
+    --red: #dc2626;
+    --today-bg: #fef9ee;
+    --today-border: #f0e4c8;
+    --section-accent: #2d7a4f;
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
   body {
-    font-family: 'DM Sans', -apple-system, sans-serif;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
     background: var(--bg);
     color: var(--text);
     min-height: 100vh;
-    padding: 2rem;
+    padding: 1.5rem 2rem;
   }
 
   .dashboard {
-    max-width: 1280px;
+    max-width: 1400px;
     margin: 0 auto;
   }
 
   .header {
     display: flex;
     justify-content: space-between;
-    align-items: flex-end;
+    align-items: flex-start;
     margin-bottom: 2rem;
-    padding-bottom: 1.5rem;
-    border-bottom: 1px solid var(--border);
+    padding-bottom: 1rem;
+    border-bottom: 2px solid var(--border);
   }
-  .header h1 {
-    font-size: 1.75rem;
+  .header-left h1 {
+    font-size: 1.5rem;
     font-weight: 700;
-    letter-spacing: -0.025em;
-    background: linear-gradient(135deg, var(--accent-light), var(--cyan));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
   }
-  .header .subtitle {
-    font-size: 0.85rem;
+  .header-left .subtitle {
+    font-size: 0.8rem;
     color: var(--text-dim);
     margin-top: 0.25rem;
   }
-  .updated {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.75rem;
-    color: var(--text-dim);
+  .header-right {
     text-align: right;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
   }
-  .updated .pulse {
+  .header-right .date {
+    font-weight: 600;
+    color: var(--text);
+  }
+  .header-right .time {
+    color: var(--text-dim);
+    font-size: 0.75rem;
+  }
+  .status-dot {
     display: inline-block;
-    width: 6px; height: 6px;
+    width: 7px; height: 7px;
     background: var(--green);
     border-radius: 50%;
-    margin-right: 6px;
-    animation: pulse 2s infinite;
-  }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
+    margin-right: 4px;
+    vertical-align: middle;
   }
 
-  .summary-row {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 1rem;
-    margin-bottom: 2rem;
-  }
-  .card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 1.25rem;
-  }
-  .card .label {
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-dim);
-    margin-bottom: 0.5rem;
-  }
-  .card .value {
-    font-size: 1.75rem;
+  .section-label {
+    font-size: 0.7rem;
     font-weight: 700;
-    font-family: 'JetBrains Mono', monospace;
-  }
-  .card .value.green { color: var(--green); }
-  .card .value.amber { color: var(--amber); }
-  .card .value.red   { color: var(--red); }
-  .card .value.cyan  { color: var(--cyan); }
-
-  .chart-container {
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--section-accent);
+    padding: 0.75rem 1rem 0.4rem;
     background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 1.5rem;
-    margin-bottom: 2rem;
-  }
-  .chart-container h2 {
-    font-size: 1rem;
-    font-weight: 500;
-    margin-bottom: 1rem;
-    color: var(--text-dim);
-  }
-  .chart-wrap {
-    position: relative;
-    height: 320px;
+    border-left: 3px solid var(--section-accent);
   }
 
-  .table-container {
+  .table-wrap {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 1.5rem;
+    border-radius: 8px;
     overflow-x: auto;
+    margin-bottom: 1.5rem;
   }
-  .table-container h2 {
-    font-size: 1rem;
-    font-weight: 500;
-    margin-bottom: 1rem;
-    color: var(--text-dim);
-  }
+
   table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.85rem;
+    font-size: 0.82rem;
   }
   th {
-    padding: 0.6rem 0.75rem;
+    padding: 0.65rem 0.8rem;
     text-align: center;
-    font-weight: 500;
+    font-weight: 600;
     color: var(--text-dim);
     border-bottom: 2px solid var(--border);
+    font-size: 0.75rem;
     white-space: nowrap;
-    font-size: 0.8rem;
+    background: var(--surface);
   }
   th:first-child {
     text-align: left;
-    min-width: 180px;
+    min-width: 140px;
+    padding-left: 1rem;
   }
   td {
-    padding: 0.55rem 0.75rem;
+    padding: 0.5rem 0.8rem;
     text-align: center;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-light);
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.8rem;
-  }
-  .funnel-name {
-    text-align: left !important;
-    font-family: 'DM Sans', sans-serif;
     font-weight: 500;
+  }
+  td:first-child {
+    text-align: left;
+    font-family: 'Inter', sans-serif;
+    font-weight: 500;
+    padding-left: 1rem;
+    color: var(--text);
+  }
+
+  .today-col {
+    background: var(--today-bg) !important;
+    border-left: 1px solid var(--today-border);
+    border-right: 1px solid var(--today-border);
+  }
+  th.today-col {
+    background: var(--today-bg) !important;
+    color: var(--amber);
+    font-weight: 700;
+  }
+
+  .metric-label {
+    font-weight: 600;
+    color: var(--text);
+  }
+  .booked-val {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .util-low { color: var(--green); font-weight: 600; }
+  .util-mid { color: var(--amber); font-weight: 600; }
+  .util-high { color: var(--red); font-weight: 600; }
+
+  .funnel-name {
+    font-size: 0.78rem;
+    color: var(--text);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 200px;
+    max-width: 180px;
   }
-  .cell-zero { color: var(--text-dim); opacity: 0.4; }
-  .cell-active { color: var(--accent-light); font-weight: 500; }
-  .cell-total { font-weight: 700; color: var(--text); }
-  .cell-cap { color: var(--text-dim); }
-  .totals-row td {
-    border-top: 2px solid var(--accent);
-    border-bottom: 1px solid var(--border);
-    background: rgba(99, 102, 241, 0.06);
-  }
-  .cap-row td { color: var(--text-dim); }
-  .util-row td { font-weight: 700; }
-  .util-low  { color: var(--green); }
-  .util-mid  { color: var(--amber); }
-  .util-high { color: var(--red); }
 
-  @media (max-width: 768px) {
-    body { padding: 1rem; }
-    .summary-row { grid-template-columns: repeat(2, 1fr); }
-    .header { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+  tr.totals-row td {
+    border-top: 2px solid var(--border);
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  @media (max-width: 900px) {
+    body { padding: 0.75rem; }
   }
 </style>
 </head>
@@ -198,195 +185,105 @@
 <div class="dashboard">
 
   <div class="header">
-    <div>
-      <h1>Call Capacity Dashboard</h1>
-      <div class="subtitle">10-Day Rolling Window — First Strategy Call Bookings vs. Capacity</div>
+    <div class="header-left">
+      <h1>📞 Call Capacity Dashboard</h1>
+      <div class="subtitle">10-Day Lookahead · First Meetings Only</div>
     </div>
-    <div class="updated">
-      <span class="pulse"></span> Last updated<br>
-      <strong>Mar 02, 2026 at 02:03 PM PST</strong>
-    </div>
-  </div>
-
-  <div class="summary-row" id="summaryCards"></div>
-
-  <div class="chart-container">
-    <h2>Daily Bookings vs. Capacity</h2>
-    <div class="chart-wrap">
-      <canvas id="capacityChart"></canvas>
+    <div class="header-right">
+      <div class="date"><span class="status-dot"></span>Monday, March 2, 2026</div>
+      <div class="time">Last updated: 02:19 PM PST</div>
     </div>
   </div>
 
-  <div class="table-container">
-    <h2>Funnel Breakdown</h2>
+  <div class="table-wrap">
+    <div class="section-label">CAPACITY METRICS</div>
+    <table>
+      <thead>
+        <tr>
+          <th></th>
+          <th class="today-col">► TODAY<br>03/02</th><th>TUE<br>03/03</th><th>WED<br>03/04</th><th>THU<br>03/05</th><th>FRI<br>03/06</th><th>SAT<br>03/07</th><th>SUN<br>03/08</th><th>MON<br>03/09</th><th>TUE<br>03/10</th><th>WED<br>03/11</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="metric-label">Capacity</td>
+          <td class="today-col">44</td><td>47</td><td>47</td><td>47</td><td>47</td><td>4</td><td>–</td><td>44</td><td>47</td><td>47</td>
+        </tr>
+        <tr>
+          <td class="metric-label">Booked</td>
+          <td class="today-col" class="booked-val">50</td><td class="booked-val">40</td><td class="booked-val">11</td><td class="booked-val">4</td><td class="booked-val">1</td><td class="booked-val">0</td><td class="booked-val">0</td><td class="booked-val">0</td><td class="booked-val">0</td><td class="booked-val">0</td>
+        </tr>
+        <tr>
+          <td class="metric-label">Available</td>
+          <td class="today-col">-6</td><td>7</td><td>36</td><td>43</td><td>46</td><td>4</td><td>–</td><td>44</td><td>47</td><td>47</td>
+        </tr>
+        <tr>
+          <td class="metric-label">Utilization %</td>
+          <td class="today-col" class="util-high">113.64%</td><td class="util-high">85.11%</td><td class="util-low">23.40%</td><td class="util-low">8.51%</td><td class="util-low">2.13%</td><td class="util-low">0.00%</td><td class="">N/A</td><td class="util-low">0.00%</td><td class="util-low">0.00%</td><td class="util-low">0.00%</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="table-wrap">
+    <div class="section-label">FUNNEL BREAKDOWN</div>
     <table>
       <thead>
         <tr>
           <th>Funnel</th>
-          <th>Mon<br>03/02</th><th>Tue<br>03/03</th><th>Wed<br>03/04</th><th>Thu<br>03/05</th><th>Fri<br>03/06</th><th>Sat<br>03/07</th><th>Sun<br>03/08</th><th>Mon<br>03/09</th><th>Tue<br>03/10</th><th>Wed<br>03/11</th>
-          <th>Total</th>
+          <th class="today-col">► TODAY<br>03/02</th><th>TUE<br>03/03</th><th>WED<br>03/04</th><th>THU<br>03/05</th><th>FRI<br>03/06</th><th>SAT<br>03/07</th><th>SUN<br>03/08</th><th>MON<br>03/09</th><th>TUE<br>03/10</th><th>WED<br>03/11</th>
         </tr>
       </thead>
       <tbody>
         
         <tr>
             <td class="funnel-name">Instagram</td>
-            <td class="cell-active">6</td><td class="cell-active">8</td><td class="cell-zero">0</td><td class="cell-active">1</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td>
-            <td class="cell-total">15</td>
+            <td class="today-col" style='font-weight:700;color:#b45309;'>8</td><td style='font-weight:600;'>10</td><td>0</td><td style='font-weight:600;'>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td>
         </tr>
         <tr>
             <td class="funnel-name">Instagram Setter</td>
-            <td class="cell-active">3</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td>
-            <td class="cell-total">3</td>
+            <td class="today-col" style='font-weight:700;color:#b45309;'>4</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td>
         </tr>
         <tr>
             <td class="funnel-name">Internal Webinar</td>
-            <td class="cell-active">5</td><td class="cell-active">2</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-active">1</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td>
-            <td class="cell-total">8</td>
+            <td class="today-col" style='font-weight:700;color:#b45309;'>6</td><td style='font-weight:600;'>3</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td>
         </tr>
         <tr>
             <td class="funnel-name">Low Ticket Funnel</td>
-            <td class="cell-active">8</td><td class="cell-active">7</td><td class="cell-active">4</td><td class="cell-active">1</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td>
-            <td class="cell-total">20</td>
+            <td class="today-col" style='font-weight:700;color:#b45309;'>13</td><td style='font-weight:600;'>8</td><td style='font-weight:600;'>4</td><td style='font-weight:600;'>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td>
         </tr>
         <tr>
             <td class="funnel-name">Meta Ads</td>
-            <td class="cell-active">2</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td>
-            <td class="cell-total">2</td>
+            <td class="today-col" style='font-weight:700;color:#b45309;'>2</td><td style='font-weight:600;'>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td>
+        </tr>
+        <tr>
+            <td class="funnel-name">No Attribution</td>
+            <td class="today-col">0</td><td style='font-weight:600;'>2</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td>
         </tr>
         <tr>
             <td class="funnel-name">Unknown</td>
-            <td class="cell-active">3</td><td class="cell-active">5</td><td class="cell-active">2</td><td class="cell-zero">0</td><td class="cell-active">1</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td>
-            <td class="cell-total">11</td>
+            <td class="today-col" style='font-weight:700;color:#b45309;'>3</td><td style='font-weight:600;'>6</td><td style='font-weight:600;'>2</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td>
         </tr>
         <tr>
             <td class="funnel-name">Website</td>
-            <td class="cell-active">4</td><td class="cell-active">1</td><td class="cell-active">1</td><td class="cell-active">1</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td>
-            <td class="cell-total">7</td>
+            <td class="today-col" style='font-weight:700;color:#b45309;'>4</td><td style='font-weight:600;'>2</td><td style='font-weight:600;'>1</td><td style='font-weight:600;'>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td>
         </tr>
         <tr>
             <td class="funnel-name">X</td>
-            <td class="cell-zero">0</td><td class="cell-active">1</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td>
-            <td class="cell-total">1</td>
+            <td class="today-col">0</td><td style='font-weight:600;'>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td>
         </tr>
         <tr>
             <td class="funnel-name">YouTube - OG - Cam</td>
-            <td class="cell-active">9</td><td class="cell-active">6</td><td class="cell-active">4</td><td class="cell-zero">0</td><td class="cell-active">1</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td><td class="cell-zero">0</td>
-            <td class="cell-total">20</td>
+            <td class="today-col" style='font-weight:700;color:#b45309;'>10</td><td style='font-weight:600;'>7</td><td style='font-weight:600;'>4</td><td style='font-weight:600;'>1</td><td style='font-weight:600;'>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td>
         </tr>
-        
-    <tr class="totals-row">
-        <td class="funnel-name">TOTAL</td>
-        <td class="cell-total">40</td><td class="cell-total">30</td><td class="cell-total">11</td><td class="cell-total">3</td><td class="cell-total">3</td><td class="cell-total">0</td><td class="cell-total">0</td><td class="cell-total">0</td><td class="cell-total">0</td><td class="cell-total">0</td>
-        <td class="cell-total">87</td>
-    </tr>
-        
-    <tr class="cap-row">
-        <td class="funnel-name">Capacity</td>
-        <td class="cell-cap">44</td><td class="cell-cap">47</td><td class="cell-cap">47</td><td class="cell-cap">47</td><td class="cell-cap">47</td><td class="cell-cap">4</td><td class="cell-cap">0</td><td class="cell-cap">44</td><td class="cell-cap">47</td><td class="cell-cap">47</td>
-        <td class="cell-cap">—</td>
-    </tr>
-        
-    <tr class="util-row">
-        <td class="funnel-name">Utilization</td>
-        <td class="util-high">90.9%</td><td class="util-mid">63.8%</td><td class="util-low">23.4%</td><td class="util-low">6.4%</td><td class="util-low">6.4%</td><td class="util-low">0.0%</td><td class="util-low">0%</td><td class="util-low">0.0%</td><td class="util-low">0.0%</td><td class="util-low">0.0%</td>
-        <td class="cell-cap">—</td>
-    </tr>
+        <tr class="totals-row">
+          <td class="metric-label">TOTAL</td>
+          <td class="today-col" style="font-weight:700;">50</td><td style="font-weight:700;">40</td><td style="font-weight:700;">11</td><td style="font-weight:700;">4</td><td style="font-weight:700;">1</td><td style="font-weight:700;">0</td><td style="font-weight:700;">0</td><td style="font-weight:700;">0</td><td style="font-weight:700;">0</td><td style="font-weight:700;">0</td>
+        </tr>
       </tbody>
     </table>
   </div>
 
 </div>
-
-<script>
-const labels   = ["Mon 03/02", "Tue 03/03", "Wed 03/04", "Thu 03/05", "Fri 03/06", "Sat 03/07", "Sun 03/08", "Mon 03/09", "Tue 03/10", "Wed 03/11"];
-const booked   = [40, 30, 11, 3, 3, 0, 0, 0, 0, 0];
-const capacity = [44, 47, 47, 47, 47, 4, 0, 44, 47, 47];
-const util     = [90.9, 63.8, 23.4, 6.4, 6.4, 0.0, 0, 0.0, 0.0, 0.0];
-
-const totalBooked   = booked.reduce((a,b) => a+b, 0);
-const totalCapacity = capacity.reduce((a,b) => a+b, 0);
-const avgUtil       = totalCapacity > 0 ? (totalBooked / totalCapacity * 100).toFixed(1) : 0;
-const peakUtil      = Math.max(...util).toFixed(1);
-
-const cards = [
-  { label: 'Total Booked', value: totalBooked, cls: 'cyan' },
-  { label: 'Total Capacity', value: totalCapacity, cls: '' },
-  { label: 'Avg Utilization', value: avgUtil + '%', cls: parseFloat(avgUtil) >= 80 ? 'red' : parseFloat(avgUtil) >= 50 ? 'amber' : 'green' },
-  { label: 'Peak Utilization', value: peakUtil + '%', cls: parseFloat(peakUtil) >= 80 ? 'red' : parseFloat(peakUtil) >= 50 ? 'amber' : 'green' },
-];
-
-const cardsContainer = document.getElementById('summaryCards');
-cards.forEach(c => {
-  cardsContainer.innerHTML += `
-    <div class="card">
-      <div class="label">${c.label}</div>
-      <div class="value ${c.cls}">${c.value}</div>
-    </div>`;
-});
-
-const ctx = document.getElementById('capacityChart').getContext('2d');
-new Chart(ctx, {
-  type: 'bar',
-  data: {
-    labels: labels,
-    datasets: [
-      {
-        label: 'Booked',
-        data: booked,
-        backgroundColor: booked.map((b, i) => {
-          const pct = capacity[i] > 0 ? b / capacity[i] : 0;
-          return pct >= 0.8 ? 'rgba(239,68,68,0.75)' : pct >= 0.5 ? 'rgba(245,158,11,0.75)' : 'rgba(34,197,94,0.75)';
-        }),
-        borderRadius: 6,
-        barPercentage: 0.6,
-        order: 2,
-      },
-      {
-        label: 'Capacity',
-        data: capacity,
-        type: 'line',
-        borderColor: 'rgba(99,102,241,0.6)',
-        borderWidth: 2,
-        borderDash: [6, 4],
-        pointBackgroundColor: 'rgba(99,102,241,0.8)',
-        pointRadius: 4,
-        fill: false,
-        order: 1,
-      }
-    ]
-  },
-  options: {
-    responsive: true,
-    maintainAspectRatio: false,
-    interaction: { mode: 'index', intersect: false },
-    plugins: {
-      legend: {
-        labels: { color: '#8494b2', font: { family: "'DM Sans', sans-serif" } }
-      },
-      tooltip: {
-        callbacks: {
-          afterBody: function(context) {
-            const i = context[0].dataIndex;
-            const pct = capacity[i] > 0 ? (booked[i] / capacity[i] * 100).toFixed(1) : 0;
-            return 'Utilization: ' + pct + '%';
-          }
-        }
-      }
-    },
-    scales: {
-      x: {
-        ticks: { color: '#8494b2', font: { family: "'DM Sans', sans-serif", size: 11 } },
-        grid: { color: 'rgba(35,45,69,0.5)' }
-      },
-      y: {
-        beginAtZero: true,
-        ticks: { color: '#8494b2', font: { family: "'JetBrains Mono', monospace", size: 11 }, stepSize: 10 },
-        grid: { color: 'rgba(35,45,69,0.5)' }
-      }
-    }
-  }
-});
-</script>
 </body>
 </html>
