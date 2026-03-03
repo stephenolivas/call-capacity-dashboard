@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Call Capacity Dashboard — Archive</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: 'Inter', -apple-system, system-ui, sans-serif;
+  background: #ffffff; color: #1a1a1a;
+}
+.header {
+  background: #1b2e1b; color: #fff;
+  padding: 0.8rem 1.5rem;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.header h1 { font-size: 1.15rem; font-weight: 700; }
+.header .sub { font-size: 0.68rem; color: #a3c4a3; margin-top: 2px; }
+.header .right { text-align: right; font-family: 'JetBrains Mono', monospace; }
+.header .right .date { font-size: 0.78rem; font-weight: 600; }
+.header .right .time { font-size: 0.65rem; color: #a3c4a3; }
+.dot { display: inline-block; width: 7px; height: 7px; background: #4ade80; border-radius: 50%; margin-right: 5px; }
+.wrap { padding: 1rem 1.5rem 2rem; max-width: 1500px; margin: 0 auto; }
+.sec {
+  font-size: 0.62rem; font-weight: 800; letter-spacing: 0.14em;
+  text-transform: uppercase; color: #1b5e1b;
+  padding: 0.55rem 0.6rem 0.3rem;
+  border-left: 3px solid #1b5e1b; background: #f8faf8;
+}
+.card {
+  border: 1px solid #d4d4d4; border-radius: 4px;
+  overflow-x: auto; margin-bottom: 1rem; background: #fff;
+}
+table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+th {
+  padding: 0.5rem 0.6rem; font-size: 0.68rem; font-weight: 700;
+  text-align: center; color: #555; border-bottom: 2px solid #d4d4d4;
+  white-space: nowrap; background: #fafafa; line-height: 1.4;
+}
+th:first-child { text-align: left; padding-left: 0.6rem; }
+td {
+  padding: 0.35rem 0.6rem; border-bottom: 1px solid #ececec; font-size: 0.78rem;
+}
+td.num {
+  text-align: center; font-family: 'JetBrains Mono', monospace;
+  font-size: 0.76rem; font-weight: 500; color: #333;
+}
+td.label { font-weight: 500; font-size: 0.76rem; padding-left: 0.6rem; color: #1a1a1a; }
+.metric { font-weight: 600; font-size: 0.78rem; padding-left: 0.6rem; color: #1a1a1a; }
+th.col-date.today { background: #fdf3e0 !important; color: #b45309; }
+td.today { background: #fdf8ee !important; }
+th.col-date.past { background: #f5f5f5 !important; color: #999; }
+td.past { background: #fafafa !important; color: #888 !important; }
+.booked { color: #1b7a2e; font-weight: 700; }
+.zero { color: #aaa; }
+.total-num { font-weight: 700; color: #1a1a1a; }
+.util-low { color: #16a34a; font-weight: 700; }
+.util-mid { color: #b45309; font-weight: 700; }
+.util-high { color: #dc2626; font-weight: 700; }
+tr.total-row td { border-top: 2px solid #bbb; }
+.footer {
+  margin-top: 1.5rem; padding-top: 0.75rem; border-top: 1px solid #e0e0e0;
+  font-size: 0.72rem; color: #888;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.footer a { color: #1b7a2e; text-decoration: none; font-weight: 600; }
+.footer a:hover { text-decoration: underline; }
+.excluded-section { margin-top: 0.5rem; }
+.excluded-section summary { font-size: 0.72rem; font-weight: 600; color: #666; cursor: pointer; padding: 0.4rem 0; }
+.excluded-section .exc-table { margin-top: 0.3rem; }
+.excluded-section .exc-table td { font-size: 0.7rem; color: #666; padding: 0.2rem 0.6rem; }
+.summary-cards {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 1.25rem;
+}
+.s-card {
+  background: #f8faf8; border: 1px solid #d4d4d4; border-radius: 6px; padding: 1rem;
+}
+.s-card .s-label { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: #666; margin-bottom: 0.3rem; }
+.s-card .s-value { font-family: 'JetBrains Mono', monospace; font-size: 1.5rem; font-weight: 700; }
+.s-card .s-value.green { color: #1b7a2e; }
+@media (max-width: 900px) {
+  .header { padding: 0.6rem 0.75rem; }
+  .wrap { padding: 0.5rem 0.75rem; }
+  .summary-cards { grid-template-columns: 1fr; }
+}
+
+a:hover { text-decoration: underline !important; }
+</style>
+</head><body>
+<div class="header">
+  <div>
+    <h1>📞 Call Capacity Dashboard — Archive</h1>
+    <div class="sub">Historical snapshots and summaries</div>
+  </div>
+  <div class="right">
+    <div class="date"><span class="dot"></span>Tuesday, March 3, 2026</div>
+    <div class="time">Updated: 02:33 PM PST</div>
+  </div>
+</div>
+<div class="wrap">
+  <div style="margin-bottom:1rem;">
+    <a href="index.html" style="color:#1b7a2e; font-weight:600; text-decoration:none; font-size:0.85rem;">← Back to Live Dashboard</a>
+  </div>
+  <div class="card">
+    <div class="sec">📈 MONTHLY SUMMARIES</div>
+    <table style="table-layout:auto"><tbody><tr><td class="label" style="color:#999;">No archives yet — check back tomorrow</td></tr></tbody></table>
+  </div>
+  <div class="card">
+    <div class="sec">📊 WEEKLY SUMMARIES</div>
+    <table style="table-layout:auto"><tbody><tr><td class="label" style="color:#999;">No archives yet — check back tomorrow</td></tr></tbody></table>
+  </div>
+  <div class="card">
+    <div class="sec">📅 DAILY SNAPSHOTS</div>
+    <table style="table-layout:auto"><tbody><tr><td class="label"><a href="archive/2026-03-03.html" style="color:#1b7a2e; text-decoration:none; font-weight:500;">Tuesday, March 3, 2026</a></td></tr>
+</tbody></table>
+  </div>
+  <div class="footer">
+    <span>Archive generated Mar 3, 2026 at 02:33 PM PST</span>
+    <a href="https://anthony-funnel-reporting-mtd.tiiny.site/" target="_blank">📊 MTD Funnel Reporting →</a>
+  </div>
+</div></body></html>
