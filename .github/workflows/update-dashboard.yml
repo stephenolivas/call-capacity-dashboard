@@ -1,10 +1,7 @@
-name: Update Call Capacity Dashboard
+name: update-dashboard
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: [update_dashboard.py]
 
 permissions:
   contents: write
@@ -29,7 +26,6 @@ jobs:
       - name: Run dashboard update
         env:
           CLOSE_API_KEY: ${{ secrets.CLOSE_API_KEY }}
-          OUTPUT_FILE: index.html
           PYTHONUNBUFFERED: "1"
         run: python -u update_dashboard.py
 
@@ -37,6 +33,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add index.html
-          git diff --cached --quiet || git commit -m "📊 Update dashboard $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git add index.html archive.html archive/
+          git diff --cached --quiet || git commit -m "📊 Update dashboard $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           git push
