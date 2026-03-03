@@ -139,8 +139,9 @@ def run_pipeline():
     pipeline_start = time.time()
 
     today = datetime.now(PACIFIC).date()
+    start_date = today - timedelta(days=3)
     end_date = today + timedelta(days=10)
-    log(f"📅 Date range: {today} to {end_date} (Pacific)")
+    log(f"📅 Date range: {start_date} to {end_date} (Pacific, 3 prior + today + 9 forward)")
 
     # Step 1: Fetch ALL meetings
     step_start = time.time()
@@ -167,7 +168,7 @@ def run_pipeline():
 
     for m in all_meetings:
         meeting_date = parse_meeting_date_pacific(m)
-        if not meeting_date or meeting_date < today or meeting_date >= end_date:
+        if not meeting_date or meeting_date < start_date or meeting_date >= end_date:
             counts["out_of_range"] += 1
             continue
 
@@ -220,12 +221,12 @@ def run_pipeline():
     for m in meetings_in_window:
         lead_id = m.get("lead_id")
         lead_data = lead_cache.get(lead_id) if lead_id else None
-        funnel = (lead_data.get(FIELD_FUNNEL_NAME_DEAL) if lead_data else None) or "Unknown"
+        funnel = (lead_data.get(FIELD_FUNNEL_NAME_DEAL) if lead_data else None) or "Unknown (Needs Review)"
         valid_meetings.append({"date": m["_meeting_date"], "title": m.get("title", ""), "funnel": funnel})
 
     log(f"   ✅ {len(valid_meetings)} valid first meetings [{elapsed_since(step_start)}]")
 
-    dates = [today + timedelta(days=i) for i in range(10)]
+    dates = [start_date + timedelta(days=i) for i in range(13)]
     daily_data = {}
     funnel_set = set()
     for d in dates:
@@ -269,12 +270,17 @@ def generate_html(data):
     counts = data["counts"]
 
     def tc(d):
-        return " today" if d == today else ""
+        if d == today:
+            return " today"
+        elif d < today:
+            return " past"
+        return ""
 
     # --- Date headers ---
     date_headers = ""
     for d in dates:
         is_today = d == today
+        is_past = d < today
         label = "► TODAY" if is_today else d.strftime("%a").upper()
         ds = d.strftime("%m/%d")
         date_headers += f'<th class="col-date{tc(d)}">{label}<br>{ds}</th>'
@@ -472,6 +478,16 @@ td.today {{
   background: #fdf8ee !important;
 }}
 
+/* ── Past columns (dimmed) ── */
+th.col-date.past {{
+  background: #f5f5f5 !important;
+  color: #999;
+}}
+td.past {{
+  background: #fafafa !important;
+  color: #888 !important;
+}}
+
 /* ── Value styles ── */
 .booked {{ color: #1b7a2e; font-weight: 700; }}
 .zero {{ color: #aaa; }}
@@ -536,7 +552,7 @@ tr.total-row td {{
 <div class="header">
   <div>
     <h1>📞 Call Capacity Dashboard</h1>
-    <div class="sub">10-Day Lookahead · First Meetings Only</div>
+    <div class="sub">3-Day Trailing + 10-Day Lookahead · First Meetings Only</div>
   </div>
   <div class="right">
     <div class="date"><span class="dot"></span>{last_updated_date}</div>
@@ -550,8 +566,8 @@ tr.total-row td {{
     <div class="sec">CAPACITY METRICS</div>
     <table>
       <colgroup>
-        <col style="width:150px">
-        <col span="10">
+        <col style="width:170px">
+        <col span="13">
       </colgroup>
       <thead><tr>
         <th></th>
@@ -570,8 +586,8 @@ tr.total-row td {{
     <div class="sec">FUNNEL BREAKDOWN</div>
     <table>
       <colgroup>
-        <col style="width:150px">
-        <col span="10">
+        <col style="width:170px">
+        <col span="13">
       </colgroup>
       <thead><tr>
         <th>Funnel</th>
