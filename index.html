@@ -140,6 +140,16 @@ td.today {
   background: #fdf8ee !important;
 }
 
+/* ── Past columns (dimmed) ── */
+th.col-date.past {
+  background: #f5f5f5 !important;
+  color: #999;
+}
+td.past {
+  background: #fafafa !important;
+  color: #888 !important;
+}
+
 /* ── Value styles ── */
 .booked { color: #1b7a2e; font-weight: 700; }
 .zero { color: #aaa; }
@@ -204,11 +214,11 @@ tr.total-row td {
 <div class="header">
   <div>
     <h1>📞 Call Capacity Dashboard</h1>
-    <div class="sub">10-Day Lookahead · First Meetings Only</div>
+    <div class="sub">3-Day Trailing + 10-Day Lookahead · First Meetings Only</div>
   </div>
   <div class="right">
     <div class="date"><span class="dot"></span>Tuesday, March 3, 2026</div>
-    <div class="time">Last updated: 07:44 AM PST</div>
+    <div class="time">Last updated: 11:33 AM PST</div>
   </div>
 </div>
 
@@ -218,18 +228,18 @@ tr.total-row td {
     <div class="sec">CAPACITY METRICS</div>
     <table>
       <colgroup>
-        <col style="width:150px">
-        <col span="10">
+        <col style="width:170px">
+        <col span="13">
       </colgroup>
       <thead><tr>
         <th></th>
-        <th class="col-date today">► TODAY<br>03/03</th><th class="col-date">WED<br>03/04</th><th class="col-date">THU<br>03/05</th><th class="col-date">FRI<br>03/06</th><th class="col-date">SAT<br>03/07</th><th class="col-date">SUN<br>03/08</th><th class="col-date">MON<br>03/09</th><th class="col-date">TUE<br>03/10</th><th class="col-date">WED<br>03/11</th><th class="col-date">THU<br>03/12</th>
+        <th class="col-date past">SAT<br>02/28</th><th class="col-date past">SUN<br>03/01</th><th class="col-date past">MON<br>03/02</th><th class="col-date today">► TODAY<br>03/03</th><th class="col-date">WED<br>03/04</th><th class="col-date">THU<br>03/05</th><th class="col-date">FRI<br>03/06</th><th class="col-date">SAT<br>03/07</th><th class="col-date">SUN<br>03/08</th><th class="col-date">MON<br>03/09</th><th class="col-date">TUE<br>03/10</th><th class="col-date">WED<br>03/11</th><th class="col-date">THU<br>03/12</th>
       </tr></thead>
       <tbody>
-        <tr><td class="metric">Capacity</td><td class="num today">60</td><td class="num">60</td><td class="num">60</td><td class="num">60</td><td class="num">4</td><td class="num">–</td><td class="num">57</td><td class="num">60</td><td class="num">60</td><td class="num">60</td></tr>
-        <tr><td class="metric">Booked</td><td class="num booked today">47</td><td class="num booked">13</td><td class="num booked">4</td><td class="num booked">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
-        <tr><td class="metric">Available</td><td class="num today">13</td><td class="num">47</td><td class="num">56</td><td class="num">59</td><td class="num">4</td><td class="num">–</td><td class="num">57</td><td class="num">60</td><td class="num">60</td><td class="num">60</td></tr>
-        <tr><td class="metric">Utilization %</td><td class="num util-mid today">78.33%</td><td class="num util-low">21.67%</td><td class="num util-low">6.67%</td><td class="num util-low">1.67%</td><td class="num util-low">0.00%</td><td class="num">N/A</td><td class="num util-low">0.00%</td><td class="num util-low">0.00%</td><td class="num util-low">0.00%</td><td class="num util-low">0.00%</td></tr>
+        <tr><td class="metric">Capacity</td><td class="num past">4</td><td class="num past">–</td><td class="num past">57</td><td class="num today">60</td><td class="num">60</td><td class="num">60</td><td class="num">60</td><td class="num">4</td><td class="num">–</td><td class="num">57</td><td class="num">60</td><td class="num">60</td><td class="num">60</td></tr>
+        <tr><td class="metric">Booked</td><td class="num booked past">3</td><td class="num zero past">0</td><td class="num booked past">48</td><td class="num booked today">49</td><td class="num booked">19</td><td class="num booked">3</td><td class="num booked">2</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
+        <tr><td class="metric">Available</td><td class="num past">1</td><td class="num past">–</td><td class="num past">9</td><td class="num today">11</td><td class="num">41</td><td class="num">57</td><td class="num">58</td><td class="num">4</td><td class="num">–</td><td class="num">57</td><td class="num">60</td><td class="num">60</td><td class="num">60</td></tr>
+        <tr><td class="metric">Utilization %</td><td class="num util-mid past">75.00%</td><td class="num past">N/A</td><td class="num util-high past">84.21%</td><td class="num util-high today">81.67%</td><td class="num util-low">31.67%</td><td class="num util-low">5.00%</td><td class="num util-low">3.33%</td><td class="num util-low">0.00%</td><td class="num">N/A</td><td class="num util-low">0.00%</td><td class="num util-low">0.00%</td><td class="num util-low">0.00%</td><td class="num util-low">0.00%</td></tr>
       </tbody>
     </table>
   </div>
@@ -238,29 +248,30 @@ tr.total-row td {
     <div class="sec">FUNNEL BREAKDOWN</div>
     <table>
       <colgroup>
-        <col style="width:150px">
-        <col span="10">
+        <col style="width:170px">
+        <col span="13">
       </colgroup>
       <thead><tr>
         <th>Funnel</th>
-        <th class="col-date today">► TODAY<br>03/03</th><th class="col-date">WED<br>03/04</th><th class="col-date">THU<br>03/05</th><th class="col-date">FRI<br>03/06</th><th class="col-date">SAT<br>03/07</th><th class="col-date">SUN<br>03/08</th><th class="col-date">MON<br>03/09</th><th class="col-date">TUE<br>03/10</th><th class="col-date">WED<br>03/11</th><th class="col-date">THU<br>03/12</th>
+        <th class="col-date past">SAT<br>02/28</th><th class="col-date past">SUN<br>03/01</th><th class="col-date past">MON<br>03/02</th><th class="col-date today">► TODAY<br>03/03</th><th class="col-date">WED<br>03/04</th><th class="col-date">THU<br>03/05</th><th class="col-date">FRI<br>03/06</th><th class="col-date">SAT<br>03/07</th><th class="col-date">SUN<br>03/08</th><th class="col-date">MON<br>03/09</th><th class="col-date">TUE<br>03/10</th><th class="col-date">WED<br>03/11</th><th class="col-date">THU<br>03/12</th>
       </tr></thead>
       <tbody>
-        <tr><td class="label">Instagram</td><td class="num booked today">10</td><td class="num booked">1</td><td class="num booked">1</td><td class="num booked">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
-<tr><td class="label">Instagram Setter</td><td class="num booked today">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
-<tr><td class="label">Internal Webinar</td><td class="num booked today">4</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
-<tr><td class="label">Linkedin</td><td class="num booked today">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
-<tr><td class="label">Low Ticket Funnel</td><td class="num booked today">7</td><td class="num booked">3</td><td class="num booked">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
-<tr><td class="label">Meta Ads</td><td class="num booked today">6</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
-<tr><td class="label">No Attribution</td><td class="num booked today">2</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
-<tr><td class="label">Unknown</td><td class="num booked today">4</td><td class="num booked">4</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
-<tr><td class="label">Website</td><td class="num booked today">2</td><td class="num booked">1</td><td class="num booked">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
-<tr><td class="label">X</td><td class="num booked today">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
-<tr><td class="label">YouTube - OG - Cam</td><td class="num booked today">9</td><td class="num booked">4</td><td class="num booked">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
+        <tr><td class="label">Instagram</td><td class="num zero past">0</td><td class="num zero past">0</td><td class="num booked past">9</td><td class="num booked today">11</td><td class="num booked">2</td><td class="num booked">1</td><td class="num booked">2</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
+<tr><td class="label">Instagram Setter</td><td class="num zero past">0</td><td class="num zero past">0</td><td class="num booked past">4</td><td class="num booked today">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
+<tr><td class="label">Internal Webinar</td><td class="num zero past">0</td><td class="num zero past">0</td><td class="num booked past">4</td><td class="num booked today">2</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
+<tr><td class="label">Linkedin</td><td class="num zero past">0</td><td class="num zero past">0</td><td class="num zero past">0</td><td class="num booked today">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
+<tr><td class="label">Low Ticket Funnel</td><td class="num zero past">0</td><td class="num zero past">0</td><td class="num booked past">13</td><td class="num booked today">8</td><td class="num booked">4</td><td class="num booked">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
+<tr><td class="label">Meta Ads</td><td class="num zero past">0</td><td class="num zero past">0</td><td class="num booked past">1</td><td class="num booked today">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
+<tr><td class="label">No Attribution</td><td class="num zero past">0</td><td class="num zero past">0</td><td class="num zero past">0</td><td class="num booked today">2</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
+<tr><td class="label">Unknown (Needs Review)</td><td class="num booked past">1</td><td class="num zero past">0</td><td class="num booked past">3</td><td class="num booked today">4</td><td class="num booked">7</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
+<tr><td class="label">VSL</td><td class="num zero past">0</td><td class="num zero past">0</td><td class="num zero past">0</td><td class="num booked today">7</td><td class="num booked">2</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
+<tr><td class="label">Website</td><td class="num booked past">1</td><td class="num zero past">0</td><td class="num booked past">4</td><td class="num booked today">2</td><td class="num zero">0</td><td class="num booked">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
+<tr><td class="label">X</td><td class="num zero past">0</td><td class="num zero past">0</td><td class="num zero past">0</td><td class="num booked today">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
+<tr><td class="label">YouTube - OG - Cam</td><td class="num booked past">1</td><td class="num zero past">0</td><td class="num booked past">10</td><td class="num booked today">9</td><td class="num booked">4</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
 
         <tr class="total-row">
           <td class="metric">TOTAL</td>
-          <td class="num total-num today">47</td><td class="num total-num">13</td><td class="num total-num">4</td><td class="num total-num">1</td><td class="num total-num">0</td><td class="num total-num">0</td><td class="num total-num">0</td><td class="num total-num">0</td><td class="num total-num">0</td><td class="num total-num">0</td>
+          <td class="num total-num past">3</td><td class="num total-num past">0</td><td class="num total-num past">48</td><td class="num total-num today">49</td><td class="num total-num">19</td><td class="num total-num">3</td><td class="num total-num">2</td><td class="num total-num">0</td><td class="num total-num">0</td><td class="num total-num">0</td><td class="num total-num">0</td><td class="num total-num">0</td><td class="num total-num">0</td>
         </tr>
       </tbody>
     </table>
@@ -268,18 +279,24 @@ tr.total-row td {
 
   <div class="excluded-section">
     <details>
-      <summary>📋 Excluded Titles (7 meetings not classified as first calls)</summary>
+      <summary>📋 Excluded Titles (13 meetings not classified as first calls)</summary>
       <div class="card exc-table">
         <table>
           <thead><tr><th>Title</th><th>Date</th></tr></thead>
           <tbody>
-            <tr><td class="label">45 min with Elvis (Scott Chait)</td><td class="num">2026-03-03</td></tr>
+            <tr><td class="label">Erick Aguero  and Joe Dysert</td><td class="num">2026-03-06</td></tr>
+<tr><td class="label">45 min with Elvis (Scott Chait)</td><td class="num">2026-03-03</td></tr>
+<tr><td class="label">45 min with Elvis (Scott Chait)</td><td class="num">2026-03-02</td></tr>
 <tr><td class="label">drijammal@me.com / John</td><td class="num">2026-03-04</td></tr>
 <tr><td class="label">Meet with Micquel Hewitt</td><td class="num">2026-03-03</td></tr>
 <tr><td class="label">Meeting with James Savius</td><td class="num">2026-03-06</td></tr>
 <tr><td class="label">Meeting with James Savius</td><td class="num">2026-03-06</td></tr>
+<tr><td class="label">Meet with Paola No Onaci</td><td class="num">2026-03-02</td></tr>
 <tr><td class="label">45 min with Elvis (Joe  Greer)</td><td class="num">2026-03-03</td></tr>
+<tr><td class="label">Meet with Humera Farheen via phone</td><td class="num">2026-02-28</td></tr>
+<tr><td class="label">Vendingpreneur Intro Call</td><td class="num">2026-03-02</td></tr>
 <tr><td class="label">Dr Appt</td><td class="num">2026-03-06</td></tr>
+<tr><td class="label">Lisa/Joe Vending</td><td class="num">2026-03-02</td></tr>
 
           </tbody>
         </table>
@@ -288,7 +305,7 @@ tr.total-row td {
   </div>
 
   <div class="footer">
-    <span>Classification: 65 included · 124 excluded · 7 unclassified</span>
+    <span>Classification: 124 included · 186 excluded · 13 unclassified</span>
     <a href="https://anthony-funnel-reporting-mtd.tiiny.site/" target="_blank">📊 MTD Funnel Reporting →</a>
   </div>
 
