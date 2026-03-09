@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Weekly Summary — Mar 2 to Mar 8, 2026</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: 'Inter', -apple-system, system-ui, sans-serif;
+  background: #ffffff; color: #1a1a1a;
+}
+.header {
+  background: #1b2e1b; color: #fff;
+  padding: 0.8rem 1.5rem;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.header h1 { font-size: 1.15rem; font-weight: 700; }
+.header .sub { font-size: 0.68rem; color: #a3c4a3; margin-top: 2px; }
+.header .right { text-align: right; font-family: 'JetBrains Mono', monospace; }
+.header .right .date { font-size: 0.78rem; font-weight: 600; }
+.header .right .time { font-size: 0.65rem; color: #a3c4a3; }
+.dot { display: inline-block; width: 7px; height: 7px; background: #4ade80; border-radius: 50%; margin-right: 5px; }
+.wrap { padding: 1rem 1.5rem 2rem; max-width: 1500px; margin: 0 auto; }
+.sec {
+  font-size: 0.62rem; font-weight: 800; letter-spacing: 0.14em;
+  text-transform: uppercase; color: #1b5e1b;
+  padding: 0.55rem 0.6rem 0.3rem;
+  border-left: 3px solid #1b5e1b; background: #f8faf8;
+}
+.card {
+  border: 1px solid #d4d4d4; border-radius: 4px;
+  overflow-x: auto; margin-bottom: 1rem; background: #fff;
+}
+table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+th {
+  padding: 0.5rem 0.6rem; font-size: 0.68rem; font-weight: 700;
+  text-align: center; color: #555; border-bottom: 2px solid #d4d4d4;
+  white-space: nowrap; background: #fafafa; line-height: 1.4;
+}
+th:first-child { text-align: left; padding-left: 0.6rem; }
+td {
+  padding: 0.35rem 0.6rem; border-bottom: 1px solid #ececec; font-size: 0.78rem;
+}
+td.num {
+  text-align: center; font-family: 'JetBrains Mono', monospace;
+  font-size: 0.76rem; font-weight: 500; color: #333;
+}
+td.label { font-weight: 500; font-size: 0.76rem; padding-left: 0.6rem; color: #1a1a1a; }
+.metric { font-weight: 600; font-size: 0.78rem; padding-left: 0.6rem; color: #1a1a1a; }
+th.col-date.today { background: #fdf3e0 !important; color: #b45309; }
+td.today { background: #fdf8ee !important; }
+th.col-date.past { background: #f5f5f5 !important; color: #999; }
+td.past { background: #fafafa !important; color: #888 !important; }
+.booked { color: #1b7a2e; font-weight: 700; }
+.zero { color: #aaa; }
+.total-num { font-weight: 700; color: #1a1a1a; }
+.util-low { color: #16a34a; font-weight: 700; }
+.util-mid { color: #b45309; font-weight: 700; }
+.util-high { color: #dc2626; font-weight: 700; }
+tr.total-row td { border-top: 2px solid #bbb; }
+.footer {
+  margin-top: 1.5rem; padding-top: 0.75rem; border-top: 1px solid #e0e0e0;
+  font-size: 0.72rem; color: #888;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.footer a { color: #1b7a2e; text-decoration: none; font-weight: 600; }
+.footer a:hover { text-decoration: underline; }
+.excluded-section { margin-top: 0.5rem; }
+.excluded-section summary { font-size: 0.72rem; font-weight: 600; color: #666; cursor: pointer; padding: 0.4rem 0; }
+.excluded-section .exc-table { margin-top: 0.3rem; }
+.excluded-section .exc-table td { font-size: 0.7rem; color: #666; padding: 0.2rem 0.6rem; }
+.summary-cards {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 1.25rem;
+}
+.s-card {
+  background: #f8faf8; border: 1px solid #d4d4d4; border-radius: 6px; padding: 1rem;
+}
+.s-card .s-label { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: #666; margin-bottom: 0.3rem; }
+.s-card .s-value { font-family: 'JetBrains Mono', monospace; font-size: 1.5rem; font-weight: 700; }
+.s-card .s-value.green { color: #1b7a2e; }
+@media (max-width: 900px) {
+  .header { padding: 0.6rem 0.75rem; }
+  .wrap { padding: 0.5rem 0.75rem; }
+  .summary-cards { grid-template-columns: 1fr; }
+}
+</style>
+</head><body>
+<div class="header">
+  <div>
+    <h1>📞 Weekly Summary — Mar 2 to Mar 8, 2026</h1>
+    <div class="sub">Monday through Sunday · First Meetings Only</div>
+  </div>
+  <div class="right">
+    <div class="date"><span class="dot"></span>March 2, 2026</div>
+    <div class="time">Generated: Mar 9 at 12:04 AM PDT</div>
+  </div>
+</div>
+<div class="wrap">
+  <div class="summary-cards">
+    <div class="s-card"><div class="s-label">Total Booked</div><div class="s-value green">227</div></div>
+    <div class="s-card"><div class="s-label">Total Capacity</div><div class="s-value">301</div></div>
+    <div class="s-card"><div class="s-label">Avg Utilization</div><div class="s-value util-mid">75.4%</div></div>
+  </div>
+  <div class="card">
+    <div class="sec">DAILY BREAKDOWN</div>
+    <table>
+      <colgroup><col style="width:170px"><col span="8"></colgroup>
+      <thead><tr><th></th><th class="col-date">MON<br>03/02</th><th class="col-date">TUE<br>03/03</th><th class="col-date">WED<br>03/04</th><th class="col-date">THU<br>03/05</th><th class="col-date">FRI<br>03/06</th><th class="col-date">SAT<br>03/07</th><th class="col-date">SUN<br>03/08</th><th class="col-date" style="background:#f0f0f0;">TOTAL</th></tr></thead>
+      <tbody>
+        <tr><td class="metric">Capacity</td><td class="num">57</td><td class="num">60</td><td class="num">60</td><td class="num">60</td><td class="num">60</td><td class="num">4</td><td class="num">–</td><td class="num total-num">301</td></tr>
+        <tr><td class="metric">Booked</td><td class="num booked">48</td><td class="num booked">47</td><td class="num booked">41</td><td class="num booked">35</td><td class="num booked">53</td><td class="num booked">1</td><td class="num booked">2</td><td class="num total-num booked">227</td></tr>
+        <tr><td class="metric">Available</td><td class="num">9</td><td class="num">13</td><td class="num">19</td><td class="num">25</td><td class="num">7</td><td class="num">3</td><td class="num">–</td><td class="num total-num">74</td></tr>
+        <tr><td class="metric">Utilization %</td><td class="num util-high">84.2%</td><td class="num util-mid">78.3%</td><td class="num util-mid">68.3%</td><td class="num util-mid">58.3%</td><td class="num util-high">88.3%</td><td class="num util-low">25.0%</td><td class="num">N/A</td><td class="num total-num util-mid">75.4%</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="card">
+    <div class="sec">FUNNEL BREAKDOWN</div>
+    <table>
+      <colgroup><col style="width:170px"><col span="8"></colgroup>
+      <thead><tr><th>Funnel</th><th class="col-date">MON<br>03/02</th><th class="col-date">TUE<br>03/03</th><th class="col-date">WED<br>03/04</th><th class="col-date">THU<br>03/05</th><th class="col-date">FRI<br>03/06</th><th class="col-date">SAT<br>03/07</th><th class="col-date">SUN<br>03/08</th><th class="col-date" style="background:#f0f0f0;">TOTAL</th></tr></thead>
+      <tbody>
+        <tr><td class="label">Instagram</td><td class="num booked">9</td><td class="num booked">11</td><td class="num booked">2</td><td class="num booked">11</td><td class="num booked">13</td><td class="num zero">0</td><td class="num zero">0</td><td class="num total-num">46</td></tr>
+<tr><td class="label">Instagram Setter</td><td class="num booked">4</td><td class="num booked">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num booked">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num total-num">6</td></tr>
+<tr><td class="label">Internal Webinar</td><td class="num booked">4</td><td class="num booked">1</td><td class="num booked">2</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num total-num">7</td></tr>
+<tr><td class="label">Linkedin</td><td class="num zero">0</td><td class="num booked">1</td><td class="num booked">1</td><td class="num zero">0</td><td class="num booked">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num total-num">3</td></tr>
+<tr><td class="label">Low Ticket Funnel</td><td class="num booked">13</td><td class="num booked">8</td><td class="num booked">8</td><td class="num booked">5</td><td class="num booked">6</td><td class="num booked">1</td><td class="num zero">0</td><td class="num total-num">41</td></tr>
+<tr><td class="label">Meta Ads</td><td class="num booked">1</td><td class="num booked">2</td><td class="num zero">0</td><td class="num booked">1</td><td class="num booked">2</td><td class="num zero">0</td><td class="num zero">0</td><td class="num total-num">6</td></tr>
+<tr><td class="label">Mike Newsletter</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num booked">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num total-num">1</td></tr>
+<tr><td class="label">No Attribution</td><td class="num zero">0</td><td class="num booked">3</td><td class="num booked">1</td><td class="num booked">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num total-num">5</td></tr>
+<tr><td class="label">Unknown (Needs Review)</td><td class="num booked">3</td><td class="num booked">2</td><td class="num booked">2</td><td class="num booked">5</td><td class="num booked">3</td><td class="num zero">0</td><td class="num booked">1</td><td class="num total-num">16</td></tr>
+<tr><td class="label">VSL</td><td class="num zero">0</td><td class="num booked">7</td><td class="num booked">9</td><td class="num booked">5</td><td class="num booked">20</td><td class="num zero">0</td><td class="num zero">0</td><td class="num total-num">41</td></tr>
+<tr><td class="label">Webinar</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num booked">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num total-num">1</td></tr>
+<tr><td class="label">Website</td><td class="num booked">4</td><td class="num booked">2</td><td class="num booked">8</td><td class="num booked">1</td><td class="num booked">5</td><td class="num zero">0</td><td class="num zero">0</td><td class="num total-num">20</td></tr>
+<tr><td class="label">X</td><td class="num zero">0</td><td class="num booked">1</td><td class="num booked">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num total-num">2</td></tr>
+<tr><td class="label">YouTube - OG - Cam</td><td class="num booked">10</td><td class="num booked">8</td><td class="num booked">7</td><td class="num booked">4</td><td class="num booked">2</td><td class="num zero">0</td><td class="num booked">1</td><td class="num total-num">32</td></tr>
+
+        <tr class="total-row"><td class="metric">TOTAL</td><td class="num total-num">48</td><td class="num total-num">47</td><td class="num total-num">41</td><td class="num total-num">35</td><td class="num total-num">53</td><td class="num total-num">1</td><td class="num total-num">2</td><td class="num total-num">227</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="footer">
+    <a href="../archive.html">← Back to Archive</a>
+    <a href="https://anthony-funnel-reporting-mtd.tiiny.site/" target="_blank">📊 MTD Funnel Reporting →</a>
+  </div>
+</div></body></html>
