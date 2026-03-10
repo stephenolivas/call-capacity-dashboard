@@ -298,9 +298,6 @@ body { font-family: 'Inter', -apple-system, system-ui, sans-serif; background: #
 .dot { display: inline-block; width: 7px; height: 7px; background: #4ade80; border-radius: 50%; margin-right: 5px; }
 .wrap { padding: 1rem 1.5rem 2rem; max-width: 1500px; margin: 0 auto; }
 .sec { font-size: 0.62rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: #1b5e1b; padding: 0.55rem 0.6rem 0.3rem; border-left: 3px solid #1b5e1b; background: #f8faf8; }
-.sec-ext { color: #1b5e1b; border-left-color: #1b5e1b; background: #f8faf8; }
-.sec-inh { color: #5e4b1b; border-left-color: #b8860b; background: #fdf8f0; }
-.sec-unc { color: #666; border-left-color: #999; background: #f5f5f5; }
 .card { border: 1px solid #d4d4d4; border-radius: 4px; overflow-x: auto; margin-bottom: 1rem; background: #fff; }
 table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 th { padding: 0.5rem 0.6rem; font-size: 0.68rem; font-weight: 700; text-align: center; color: #555; border-bottom: 2px solid #d4d4d4; white-space: nowrap; background: #fafafa; line-height: 1.4; }
@@ -322,6 +319,10 @@ td.past { background: #fafafa !important; }
 .util-high { color: #dc2626; font-weight: 700; }
 tr.total-row td { border-top: 2px solid #bbb; }
 tr.section-divider td { border-top: 2px solid #d4d4d4; padding: 0; height: 0; }
+tr.section-label-row td { font-size: 0.62rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; padding: 0.5rem 0.6rem 0.25rem; border-bottom: 1px solid #d4d4d4; }
+tr.section-label-row.sec-ext td { color: #1b5e1b; background: #f8faf8; border-top: none; }
+tr.section-label-row.sec-inh td { color: #5e4b1b; background: #fdf8f0; border-top: 2px solid #d4d4d4; }
+tr.section-label-row.sec-unc td { color: #666; background: #f5f5f5; border-top: 2px solid #d4d4d4; }
 .footer { margin-top: 1.5rem; padding-top: 0.75rem; border-top: 1px solid #e0e0e0; font-size: 0.72rem; color: #888; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
 .footer a { color: #1b7a2e; text-decoration: none; font-weight: 600; }
 .footer a:hover { text-decoration: underline; }
@@ -508,41 +509,20 @@ def generate_rolling_html(data, exclude_other, counts):
   </div>
 
   <div class="card">
-    <div class="sec sec-ext">FUNNEL BREAKDOWN — EXTERNAL</div>
+    <div class="sec">FUNNEL BREAKDOWN</div>
     <table><colgroup><col style="width:170px"><col span="{n_cols}"></colgroup>
       <thead><tr><th>Funnel</th>{date_headers}</tr></thead>
       <tbody>
+        <tr class="section-label-row sec-ext"><td colspan="{n_cols + 1}">External</td></tr>
         {ext_rows}
-      </tbody>
-    </table>
-  </div>
-
-  <div class="card">
-    <div class="sec sec-inh">FUNNEL BREAKDOWN — IN-HOUSE</div>
-    <table><colgroup><col style="width:170px"><col span="{n_cols}"></colgroup>
-      <thead><tr><th>Funnel</th>{date_headers}</tr></thead>
-      <tbody>
+        <tr class="section-label-row sec-inh"><td colspan="{n_cols + 1}">In-House</td></tr>
         {inh_rows}
-      </tbody>
-    </table>
-  </div>
-
-  <div class="card">
-    <div class="sec sec-unc">UNCATEGORIZED</div>
-    <table><colgroup><col style="width:170px"><col span="{n_cols}"></colgroup>
-      <thead><tr><th>Funnel</th>{date_headers}</tr></thead>
-      <tbody>
+        <tr class="section-label-row sec-unc"><td colspan="{n_cols + 1}">Uncategorized</td></tr>
         {unc_rows}
-      </tbody>
-    </table>
-  </div>
-
-  <div class="card">
-    <table><colgroup><col style="width:170px"><col span="{n_cols}"></colgroup>
-      <tbody>
         <tr class="total-row"><td class="metric">TOTAL</td>{total_cells}</tr>
       </tbody>
     </table>
+  </div>
   </div>
 
   <div class="excluded-section">
