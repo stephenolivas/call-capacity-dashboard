@@ -509,14 +509,13 @@ def generate_rolling_html(data, exclude_other, counts):
   </div>
 
   <div class="card">
-    <div class="sec">FUNNEL BREAKDOWN</div>
     <table><colgroup><col style="width:170px"><col span="{n_cols}"></colgroup>
       <tbody>
-        <tr class="section-label-row sec-ext"><td colspan="{n_cols + 1}">External</td></tr>
+        <tr class="section-label-row sec-ext"><td colspan="{n_cols + 1}">Funnel Breakdown — External</td></tr>
         {ext_rows}
-        <tr class="section-label-row sec-inh"><td colspan="{n_cols + 1}">In-House</td></tr>
+        <tr class="section-label-row sec-inh"><td colspan="{n_cols + 1}">Funnel Breakdown — In-House</td></tr>
         {inh_rows}
-        <tr class="section-label-row sec-unc"><td colspan="{n_cols + 1}">Uncategorized</td></tr>
+        <tr class="section-label-row sec-unc"><td colspan="{n_cols + 1}">Funnel Breakdown — Uncategorized</td></tr>
         {unc_rows}
         <tr class="total-row"><td class="metric">TOTAL</td>{total_cells}</tr>
       </tbody>
