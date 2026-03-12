@@ -53,11 +53,11 @@ FUNNEL_CONFIG = [
     # ── External ──
     {"name": "Low Ticket Funnel",       "close_values": ["Low Ticket Funnel"], "monthly_goal": 400, "section": "external"},
     {"name": "Instagram",               "close_values": ["Instagram"],         "monthly_goal": 240, "section": "external"},
-    {"name": "YouTube - OG - Cam",      "close_values": ["YouTube - OG - Cam"],"monthly_goal": 80,  "section": "external"},
+    {"name": "YouTube",                 "close_values": ["YouTube - OG - Cam"],"monthly_goal": 80,  "section": "external"},
     {"name": "X",                       "close_values": ["X"],                 "monthly_goal": 30,  "section": "external"},
     {"name": "Linkedin",                "close_values": ["Linkedin"],          "monthly_goal": 30,  "section": "external"},
     {"name": "Instagram Setter",        "close_values": ["Instagram Setter"],  "monthly_goal": None, "section": "external"},
-    {"name": "Meta Ads",                "close_values": ["Meta Ads"],          "monthly_goal": None, "section": "external"},
+    {"name": "Meta Ads",                "close_values": ["Meta Ads"],          "monthly_goal": None, "section": "inhouse"},
     # ── In-House ──
     {"name": "VSL",                     "close_values": ["VSL"],               "monthly_goal": 200, "section": "inhouse"},
     {"name": "Website",                 "close_values": ["Website"],           "monthly_goal": 100, "section": "inhouse"},
@@ -66,6 +66,8 @@ FUNNEL_CONFIG = [
     {"name": "AK TikTok/Instagram",     "close_values": ["Tik Tok", "Anthony IG"], "monthly_goal": 5, "section": "inhouse"},
     {"name": "Side Hustle Nation/WWWS", "close_values": ["WWWS"],              "monthly_goal": 2,   "section": "inhouse"},
     {"name": "Passivepreneurs",         "close_values": ["Passivepreneurs"],   "monthly_goal": None, "section": "inhouse"},
+    {"name": "Reactivation Email",      "close_values": ["Reactivation Email"],"monthly_goal": None, "section": "inhouse"},
+    {"name": "Reactivation Scrapers",   "close_values": ["Reactivation Scrapers"],"monthly_goal": None, "section": "inhouse"},
 ]
 
 # Build reverse lookup: close_value → funnel display name
