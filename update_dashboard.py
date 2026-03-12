@@ -537,7 +537,7 @@ def generate_rolling_html(data, exclude_other, counts):
 
   <div class="footer">
     <span>Classification: {counts['include']} included · {counts['exclude']} excluded · {counts['exclude_other']} unclassified · <a href="archive.html">📁 Archive</a></span>
-    <a href="https://anthony-funnel-reporting-mtd.tiiny.site/" target="_blank">📊 MTD Funnel Reporting →</a>
+    <a href="https://stephenolivas.github.io/mtd-funnel-reporting/" target="_blank">📊 MTD Funnel Reporting →</a>
   </div>
 </div></body></html>"""
 
@@ -600,7 +600,7 @@ def generate_weekly_html(data, week_start):
   <div class="card"><div class="sec">FUNNEL TOTALS</div>
     <table style="table-layout:auto; max-width:400px;"><thead><tr><th>Funnel</th><th>Total</th></tr></thead><tbody>{funnel_rows}</tbody></table>
   </div>
-  <div class="footer"><a href="../archive.html">← Back to Archive</a><a href="https://anthony-funnel-reporting-mtd.tiiny.site/" target="_blank">📊 MTD Funnel Reporting →</a></div>
+  <div class="footer"><a href="../archive.html">← Back to Archive</a><a href="https://stephenolivas.github.io/mtd-funnel-reporting/" target="_blank">📊 MTD Funnel Reporting →</a></div>
 </div></body></html>"""
 
 
@@ -665,7 +665,7 @@ def generate_monthly_html(data, month_date):
   <div class="card"><div class="sec">FUNNEL TOTALS</div>
     <table style="table-layout:auto; max-width:400px;"><thead><tr><th>Funnel</th><th>Total</th></tr></thead><tbody>{funnel_rows}</tbody></table>
   </div>
-  <div class="footer"><a href="../archive.html">← Back to Archive</a><a href="https://anthony-funnel-reporting-mtd.tiiny.site/" target="_blank">📊 MTD Funnel Reporting →</a></div>
+  <div class="footer"><a href="../archive.html">← Back to Archive</a><a href="https://stephenolivas.github.io/mtd-funnel-reporting/" target="_blank">📊 MTD Funnel Reporting →</a></div>
 </div></body></html>"""
 
 
@@ -711,7 +711,7 @@ def generate_archive_html(archive_dir):
   <div class="card"><div class="sec">📈 MONTHLY SUMMARIES</div><table style="table-layout:auto"><tbody>{make_links(monthly_files)}</tbody></table></div>
   <div class="card"><div class="sec">📊 WEEKLY SUMMARIES</div><table style="table-layout:auto"><tbody>{make_links(weekly_files)}</tbody></table></div>
   <div class="card"><div class="sec">📅 DAILY SNAPSHOTS</div><table style="table-layout:auto"><tbody>{make_links(daily_files)}</tbody></table></div>
-  <div class="footer"><span>Archive generated {now_pacific.strftime("%b %-d, %Y at %I:%M %p %Z")}</span><a href="https://anthony-funnel-reporting-mtd.tiiny.site/" target="_blank">📊 MTD Funnel Reporting →</a></div>
+  <div class="footer"><span>Archive generated {now_pacific.strftime("%b %-d, %Y at %I:%M %p %Z")}</span><a href="https://stephenolivas.github.io/mtd-funnel-reporting/" target="_blank">📊 MTD Funnel Reporting →</a></div>
 </div></body></html>"""
 
 
