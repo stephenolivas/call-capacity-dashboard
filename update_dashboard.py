@@ -123,7 +123,7 @@ EXCLUDE_AMBIGUOUS_RE = re.compile(
 def classify_meeting_title(title):
     if not title:
         return "exclude_other"
-    if title.strip().lower().startswith("canceled:"):
+    if title.strip().lower().startswith("canceled"):
         return "exclude"
     if "vending quick discovery" in title.lower():
         return "exclude"
