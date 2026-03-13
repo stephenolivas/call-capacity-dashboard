@@ -62,7 +62,7 @@ FUNNEL_CONFIG = [
     {"name": "VSL",                     "close_values": ["VSL"],               "monthly_goal": 200, "section": "inhouse"},
     {"name": "Website",                 "close_values": ["Website"],           "monthly_goal": 100, "section": "inhouse"},
     {"name": "Internal Webinar",        "close_values": ["Internal Webinar"],  "monthly_goal": 70,  "section": "inhouse"},
-    {"name": "Newsletter",              "close_values": ["Newsletter"],        "monthly_goal": 10,  "section": "inhouse"},
+    {"name": "Mike Newsletter",           "close_values": ["Mike Newsletter"],   "monthly_goal": 10,  "section": "inhouse"},
     {"name": "AK TikTok/Instagram",     "close_values": ["Tik Tok", "Anthony IG"], "monthly_goal": 5, "section": "inhouse"},
     {"name": "Side Hustle Nation/WWWS", "close_values": ["WWWS"],              "monthly_goal": 2,   "section": "inhouse"},
     {"name": "Passivepreneurs",         "close_values": ["Passivepreneurs"],   "monthly_goal": None, "section": "inhouse"},
