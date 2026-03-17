@@ -199,14 +199,20 @@ def fetch_all_meetings():
     return all_meetings
 
 
+
 def classify_meetings(all_meetings, start_date, end_date):
-    counts = {"include": 0, "exclude": 0, "exclude_other": 0, "user_excluded": 0, "out_of_range": 0}
+    counts = {"include": 0, "exclude": 0, "exclude_other": 0, "user_excluded": 0, "out_of_range": 0, "status_excluded": 0}
     included = []
     exclude_other_titles = []
     for m in all_meetings:
         meeting_date = parse_meeting_date_pacific(m)
         if not meeting_date or meeting_date < start_date or meeting_date >= end_date:
             counts["out_of_range"] += 1
+            continue
+        # Meeting status check (canceled/declined from calendar)
+        meeting_status = (m.get("status") or "").lower().strip()
+        if meeting_status.startswith("canceled") or meeting_status.startswith("declined"):
+            counts["status_excluded"] += 1
             continue
         uid = m.get("user_id", "")
         ulist = m.get("users", [])
@@ -261,13 +267,29 @@ def build_dashboard_data(meetings, lead_cache, dates, today=None):
         lead_data = lead_cache.get(lead_id) if lead_id else None
         raw_funnel = (lead_data.get(FIELD_FUNNEL_NAME_DEAL) if lead_data else None) or ""
         funnel = map_funnel(raw_funnel)
-        valid_meetings.append({"date": m["_meeting_date"], "title": m.get("title", ""), "funnel": funnel})
+        valid_meetings.append({"date": m["_meeting_date"], "title": m.get("title", ""), "funnel": funnel, "lead_id": lead_id or ""})
+
+    # Deduplicate by lead_id per date — one lead = one booking per day
+    seen = set()
+    deduped_meetings = []
+    dupes_removed = 0
+    for m in valid_meetings:
+        key = (m["date"], m["lead_id"])
+        if m["lead_id"] and key in seen:
+            dupes_removed += 1
+            continue
+        if m["lead_id"]:
+            seen.add(key)
+        deduped_meetings.append(m)
+
+    if dupes_removed > 0:
+        log(f"   ⚠ Removed {dupes_removed} duplicate lead/day entries")
 
     daily_data = {}
     all_funnels_seen = set()
     for d in dates:
         daily_data[d] = {"booked": 0, "capacity": CAPACITY[d.weekday()], "funnels": {}}
-    for m in valid_meetings:
+    for m in deduped_meetings:
         d = m["date"]
         if d not in daily_data:
             continue
@@ -280,7 +302,7 @@ def build_dashboard_data(meetings, lead_cache, dates, today=None):
         "dates": dates,
         "daily_data": daily_data,
         "all_funnels_seen": all_funnels_seen,
-        "valid_meetings": valid_meetings,
+        "valid_meetings": deduped_meetings,
         "today": today,
     }
 
@@ -536,7 +558,7 @@ def generate_rolling_html(data, exclude_other, counts):
   </div>
 
   <div class="footer">
-    <span>Classification: {counts['include']} included · {counts['exclude']} excluded · {counts['exclude_other']} unclassified · <a href="archive.html">📁 Archive</a></span>
+    <span>Classification: {counts['include']} included · {counts['exclude']} excluded · {counts['status_excluded']} canceled/declined · {counts['exclude_other']} unclassified · <a href="archive.html">📁 Archive</a></span>
     <a href="https://stephenolivas.github.io/mtd-funnel-reporting/" target="_blank">📊 MTD Funnel Reporting →</a>
   </div>
 </div></body></html>"""
@@ -737,7 +759,7 @@ def main():
     rolling_end = today + timedelta(days=10)
     rolling_dates = [rolling_start + timedelta(days=i) for i in range(13)]
     included, exclude_other, counts = classify_meetings(all_meetings, rolling_start, rolling_end)
-    log(f"   INCLUDE: {counts['include']} | EXCLUDE: {counts['exclude']} | OTHER: {counts['exclude_other']}")
+    log(f"   INCLUDE: {counts['include']} | EXCLUDE: {counts['exclude']} | STATUS_EXCLUDED: {counts['status_excluded']} | OTHER: {counts['exclude_other']}")
     lead_cache = fetch_leads_for_meetings(included)
     rolling_data = build_dashboard_data(included, lead_cache, rolling_dates, today=today)
     html = generate_rolling_html(rolling_data, exclude_other, counts)
