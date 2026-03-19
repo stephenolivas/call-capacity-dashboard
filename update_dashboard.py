@@ -737,6 +737,259 @@ def generate_archive_html(archive_dir):
 </div></body></html>"""
 
 
+# ─── EOD Email ────────────────────────────────────────────────────────────────
+#
+# Runs ONLY at 8pm PT on M-F. No impact on any other run of this script.
+# Meeting counts (today + tomorrow) come from rolling_data already in memory —
+# zero extra API calls for those. The only additional Close API calls at 8pm are:
+#   - fetch_todays_won_opps(): query won opportunities for today
+#   - fetch_leads_for_email(): targeted lead fetches for show rate, closer name, funnel, ICP
+#
+# Required GitHub Secrets:
+#   RESEND_API_KEY  — from resend.com (free tier, 3k emails/month)
+#   EMAIL_FROM      — e.g. "EOD Reports <eod@yourdomain.com>" (domain verified in Resend)
+#   EMAIL_TO        — comma-separated recipient list, e.g. "joe@co.com,manager@co.com"
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+EMAIL_FROM     = os.environ.get("EMAIL_FROM", "")
+EMAIL_TO       = [e.strip() for e in os.environ.get("EMAIL_TO", "").split(",") if e.strip()]
+
+# ── Field IDs used only by the EOD email ─────────────────────────────────────
+
+CF_LEAD_OWNER_NAME = "cf_gOfS9pFwext58oberEegLyix8hZzeHrxhCZOVh3P3rd"
+CF_SHOW_UP         = "cf_OPyvpU45RdvjLqfm8V1VWwNxrGKogEH2IBJmfCj0Uhq"
+CF_FUNNEL_DEAL     = "cf_xqDQE8fkPsWa0RNEve7hcaxKblCe6489XeZGRDzyPdX"
+CF_ICP             = "cf_OcYP2vXsG2tvbMDubwQNcidiqVegXa7CsyWkOR3f7KN"
+
+# ── Short funnel labels for the email body ────────────────────────────────────
+
+FUNNEL_SHORT = {
+    "Low Ticket Funnel":        "LTF",
+    "Instagram":                "IG",
+    "YouTube":                  "YT",
+    "X":                        "X",
+    "Linkedin":                 "LinkedIn",
+    "Instagram Setter":         "IG Setter",
+    "Meta Ads":                 "Meta Ads",
+    "VSL":                      "VSL",
+    "Website":                  "Website",
+    "Internal Webinar":         "Webinar",
+    "Mike Newsletter":          "Newsletter",
+    "AK TikTok/Instagram":      "AK TT/IG",
+    "Side Hustle Nation/WWWS":  "SHN/WWWS",
+    "Passivepreneurs":          "Passivepreneurs",
+    "Reactivation Email":       "Reactivation Email",
+    "Reactivation Scrapers":    "Reactivation Scrapers",
+}
+
+
+def fetch_todays_won_opps(today_str):
+    """Fetch all opportunities marked won today."""
+    opps = []
+    skip = 0
+    while True:
+        data = close_get("opportunity", {
+            "date_won__gte": today_str,
+            "date_won__lte": today_str,
+            "status_type":   "won",
+            "_skip":          skip,
+            "_limit":         100,
+        })
+        opps.extend(data.get("data", []))
+        if not data.get("has_more"):
+            break
+        skip += 100
+    return opps
+
+
+def fetch_leads_for_email(lead_ids):
+    """
+    Fetch leads with all fields the EOD email needs.
+    Runs only at 8pm — separate from the main dashboard lead cache.
+    """
+    fields = ",".join([
+        "id",
+        f"custom.{CF_LEAD_OWNER_NAME}",
+        f"custom.{CF_SHOW_UP}",
+        f"custom.{CF_FUNNEL_DEAL}",
+        f"custom.{CF_ICP}",
+    ])
+    cache = {}
+    for lid in lead_ids:
+        try:
+            cache[lid] = close_get(f"lead/{lid}", {"_fields": fields})
+        except Exception as e:
+            log(f"  ⚠ EOD email: Could not fetch lead {lid}: {e}")
+            cache[lid] = None
+    return cache
+
+
+def build_eod_data(rolling_data, today):
+    """Assemble all data points needed for the EOD email."""
+
+    # Meeting counts come from rolling_data already in memory — zero extra API calls
+    today_count    = rolling_data["daily_data"].get(today, {}).get("booked", 0)
+    tomorrow       = today + timedelta(days=1)
+    tomorrow_count = rolling_data["daily_data"].get(tomorrow, {}).get("booked", 0)
+
+    # Lead IDs from today's meetings (needed for show rate)
+    today_lead_ids = list(set(
+        m["lead_id"]
+        for m in rolling_data["valid_meetings"]
+        if m["date"] == today and m.get("lead_id")
+    ))
+
+    # Fetch today's won opportunities
+    today_str = today.isoformat()
+    won_opps  = fetch_todays_won_opps(today_str)
+    log(f"   📧 EOD: {len(won_opps)} won opps today, {today_count} meetings today")
+
+    # Combine all lead IDs we need: today's meetings + won opp leads
+    won_lead_ids = list(set(o["lead_id"] for o in won_opps if o.get("lead_id")))
+    all_lead_ids = list(set(today_lead_ids + won_lead_ids))
+
+    email_leads = fetch_leads_for_email(all_lead_ids)
+
+    # ── Show rate ─────────────────────────────────────────────────────────────
+    shown = sum(
+        1 for lid in today_lead_ids
+        if email_leads.get(lid) and
+           str(email_leads[lid].get(f"custom.{CF_SHOW_UP}", "")).lower() == "yes"
+    )
+    show_rate = (shown / today_count * 100) if today_count > 0 else 0.0
+
+    # ── Revenue ───────────────────────────────────────────────────────────────
+    # Close stores opportunity `value` in USD cents — divide by 100.
+    # If revenue looks wrong, check Close Settings → Pipeline to confirm units.
+    total_revenue = sum((o.get("value") or 0) for o in won_opps) / 100
+
+    # ── Closers ───────────────────────────────────────────────────────────────
+    closer_counts = {}
+    for o in won_opps:
+        lid  = o.get("lead_id")
+        lead = email_leads.get(lid)
+        name = (
+            lead.get(f"custom.{CF_LEAD_OWNER_NAME}") if lead else None
+        ) or "Unknown"
+        closer_counts[name] = closer_counts.get(name, 0) + 1
+
+    # ── Closed Won Funnel / ICP ───────────────────────────────────────────────
+    icp_lines = []
+    for o in won_opps:
+        lid  = o.get("lead_id")
+        lead = email_leads.get(lid)
+        if not lead:
+            continue
+        raw_funnel   = lead.get(f"custom.{CF_FUNNEL_DEAL}") or ""
+        funnel_full  = CLOSE_VALUE_TO_FUNNEL.get(raw_funnel, raw_funnel) or "Unknown"
+        funnel_label = FUNNEL_SHORT.get(funnel_full, funnel_full)
+        icp          = lead.get(f"custom.{CF_ICP}") or "Unknown"
+        icp_lines.append(f"{funnel_label} / {icp}")
+
+    return {
+        "today":          today,
+        "today_count":    today_count,
+        "tomorrow_count": tomorrow_count,
+        "show_rate":      show_rate,
+        "deals":          len(won_opps),
+        "revenue":        total_revenue,
+        "closer_counts":  closer_counts,
+        "icp_lines":      icp_lines,
+    }
+
+
+def format_eod_email(data):
+    """Format the EOD email subject and plain-text body."""
+    today    = data["today"]
+    date_str = today.strftime("%-m/%-d")  # e.g. "3/17"
+
+    # Revenue formatting: $42,500 → "$42.5k"
+    rev = data["revenue"]
+    if rev >= 1_000_000:
+        rev_str = f"${rev / 1_000_000:.2f}M"
+    elif rev >= 1_000:
+        rev_str = f"${rev / 1_000:.1f}k"
+    else:
+        rev_str = f"${rev:,.0f}"
+
+    # Closers: sorted alphabetically, "x2" suffix for multiples
+    closer_parts = []
+    for name, count in sorted(data["closer_counts"].items()):
+        closer_parts.append(f"{name} x{count}" if count > 1 else name)
+    closers_str = ", ".join(closer_parts) if closer_parts else "None"
+
+    # Funnel / ICP block
+    icp_block = (
+        "\n".join(f"* {line}" for line in data["icp_lines"])
+        if data["icp_lines"] else "* None"
+    )
+
+    subject = f"EOD Stats {date_str}"
+    body = (
+        f"EOD stats for {date_str}:\n"
+        f"\n"
+        f"Revenue: {rev_str}\n"
+        f"Deals Closed: {data['deals']}\n"
+        f"Closers: {closers_str}\n"
+        f"Todays new meetings: {data['today_count']}\n"
+        f"Show rate: {data['show_rate']:.0f}%\n"
+        f"New meetings set for tomorrow: {data['tomorrow_count']}\n"
+        f"\n"
+        f"Closed won funnel / ICP:\n"
+        f"{icp_block}\n"
+    )
+    return subject, body
+
+
+def send_eod_email(rolling_data, today):
+    """
+    Build and send the EOD email via Resend.
+    Called from main() only when it's 8pm PT on a weekday.
+    All failures are caught and logged — they will never crash the dashboard run.
+    """
+    if not RESEND_API_KEY:
+        log("⚠ EOD Email: RESEND_API_KEY not set — skipping.")
+        return
+    if not EMAIL_TO:
+        log("⚠ EOD Email: EMAIL_TO not set — skipping.")
+        return
+    if not EMAIL_FROM:
+        log("⚠ EOD Email: EMAIL_FROM not set — skipping.")
+        return
+
+    log("\n═══ EOD Email ═══")
+    try:
+        data          = build_eod_data(rolling_data, today)
+        subject, body = format_eod_email(data)
+
+        log(f"   Sending: '{subject}' → {EMAIL_TO}")
+
+        resp = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type":  "application/json",
+            },
+            json={
+                "from":    EMAIL_FROM,
+                "to":      EMAIL_TO,
+                "subject": subject,
+                "text":    body,
+            },
+            timeout=30,
+        )
+
+        if resp.status_code in (200, 201):
+            log(f"✅ EOD email sent to {EMAIL_TO}")
+        else:
+            log(f"❌ EOD email failed: {resp.status_code} — {resp.text}")
+
+    except Exception as e:
+        log(f"❌ EOD email error (dashboard unaffected): {e}")
+
+
 # ─── Main ────────────────────────────────────────────────────────────────────
 
 def main():
@@ -813,6 +1066,10 @@ def main():
     ah = generate_archive_html(ARCHIVE_DIR)
     with open("archive.html", "w", encoding="utf-8") as f: f.write(ah)
     log("✅ archive.html regenerated")
+
+    # ── EOD Email (8pm PT, M-F only) ──
+    if datetime.now(PACIFIC).hour == 20 and today.weekday() < 5:
+        send_eod_email(rolling_data, today)
 
     elapsed = time.time() - start_time
     log(f"\n🏁 Done! API calls: {_api_call_count} | Time: {elapsed:.1f}s")
