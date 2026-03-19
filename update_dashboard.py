@@ -1019,45 +1019,46 @@ def format_eod_email(data):
     return subject, plain, html
 
 
-def send_eod_email(rolling_data, today):
+def send_eod_email(rolling_data, today, recipients=None):
     """
     Build and send the EOD email via Gmail SMTP.
-    Called from main() only when it's 8pm PT on a weekday (or FORCE_EOD_EMAIL=true).
+    recipients: list of email addresses to send to (defaults to EMAIL_TO).
     All failures are caught and logged — they will never crash the dashboard run.
     """
     import smtplib
     from email.mime.multipart import MIMEMultipart
     from email.mime.text import MIMEText
 
+    recipients = recipients or EMAIL_TO
+
     if not GMAIL_APP_PASSWORD:
         log("⚠ EOD Email: GMAIL_APP_PASSWORD not set — skipping.")
         return
-    if not EMAIL_TO:
-        log("⚠ EOD Email: EMAIL_TO not set — skipping.")
+    if not recipients:
+        log("⚠ EOD Email: No recipients — skipping.")
         return
     if not EMAIL_FROM:
         log("⚠ EOD Email: EMAIL_FROM not set — skipping.")
         return
 
-    log("\n═══ EOD Email ═══")
     try:
         data                 = build_eod_data(rolling_data, today)
         subject, plain, html = format_eod_email(data)
 
-        log(f"   Sending: '{subject}' → {EMAIL_TO}")
+        log(f"   Sending: '{subject}' → {recipients}")
 
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"]    = f"EOD Reports <{EMAIL_FROM}>"
-        msg["To"]      = ", ".join(EMAIL_TO)
+        msg["To"]      = ", ".join(recipients)
         msg.attach(MIMEText(plain, "plain"))
         msg.attach(MIMEText(html,  "html"))
 
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
             smtp.login(EMAIL_FROM, GMAIL_APP_PASSWORD)
-            smtp.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
+            smtp.sendmail(EMAIL_FROM, recipients, msg.as_string())
 
-        log(f"✅ EOD email sent to {EMAIL_TO}")
+        log(f"✅ EOD email sent to {recipients}")
 
     except Exception as e:
         log(f"❌ EOD email error (dashboard unaffected): {e}")
@@ -1140,10 +1141,16 @@ def main():
     with open("archive.html", "w", encoding="utf-8") as f: f.write(ah)
     log("✅ archive.html regenerated")
 
-    # ── EOD Email (8pm PT, M-F only — or forced via FORCE_EOD_EMAIL=true for testing) ──
+    # ── EOD Email (8pm PT, M-F — or forced via FORCE_EOD_EMAIL=true for testing) ──
     force_email = os.environ.get("FORCE_EOD_EMAIL", "").lower() == "true"
     if (datetime.now(PACIFIC).hour == 20 and today.weekday() < 5) or force_email:
-        send_eod_email(rolling_data, today)
+        send_eod_email(rolling_data, today, EMAIL_TO)
+
+    # ── Friday 4pm PT — send to Joe only ──
+    if datetime.now(PACIFIC).hour == 16 and today.weekday() == 4:
+        joe_email = "joedysert@modern-amenities.com"
+        log("\n═══ Friday 4pm Email (Joe) ═══")
+        send_eod_email(rolling_data, today, [joe_email])
 
     elapsed = time.time() - start_time
     log(f"\n🏁 Done! API calls: {_api_call_count} | Time: {elapsed:.1f}s")
