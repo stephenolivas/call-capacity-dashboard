@@ -1067,8 +1067,9 @@ def main():
     with open("archive.html", "w", encoding="utf-8") as f: f.write(ah)
     log("✅ archive.html regenerated")
 
-    # ── EOD Email (8pm PT, M-F only) ──
-    if datetime.now(PACIFIC).hour == 20 and today.weekday() < 5:
+    # ── EOD Email (8pm PT, M-F only — or forced via FORCE_EOD_EMAIL=true for testing) ──
+    force_email = os.environ.get("FORCE_EOD_EMAIL", "").lower() == "true"
+    if (datetime.now(PACIFIC).hour == 20 and today.weekday() < 5) or force_email:
         send_eod_email(rolling_data, today)
 
     elapsed = time.time() - start_time
