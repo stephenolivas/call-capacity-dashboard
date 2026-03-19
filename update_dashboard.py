@@ -785,6 +785,17 @@ FUNNEL_SHORT = {
 }
 
 
+def fetch_close_users():
+    """Fetch all Close org users and return a user_id → display name dict."""
+    try:
+        data = close_get("user", {"_limit": 100})
+        return {u["id"]: u.get("display_name") or u.get("first_name", "Unknown")
+                for u in data.get("data", [])}
+    except Exception as e:
+        log(f"  ⚠ EOD email: Could not fetch Close users: {e}")
+        return {}
+
+
 def fetch_todays_won_opps(today_str):
     """Fetch all opportunities marked won today."""
     opps = []
@@ -852,6 +863,9 @@ def build_eod_data(rolling_data, today):
 
     email_leads = fetch_leads_for_email(all_lead_ids)
 
+    # Fetch user map for resolving user_id → display name on won opps
+    user_map = fetch_close_users()
+
     # ── Show rate ─────────────────────────────────────────────────────────────
     shown = sum(
         1 for lid in today_lead_ids
@@ -866,13 +880,11 @@ def build_eod_data(rolling_data, today):
     total_revenue = sum((o.get("value") or 0) for o in won_opps) / 100
 
     # ── Closers ───────────────────────────────────────────────────────────────
+    # Won opps have a `user_id` (the assigned user). Resolve to display name via user_map.
     closer_counts = {}
     for o in won_opps:
-        lid  = o.get("lead_id")
-        lead = email_leads.get(lid)
-        name = (
-            lead.get(f"custom.{CF_LEAD_OWNER_NAME}") if lead else None
-        ) or "Unknown"
+        uid  = o.get("user_id") or ""
+        name = user_map.get(uid) or uid or "Unknown"
         closer_counts[name] = closer_counts.get(name, 0) + 1
 
     # ── Closed Won Funnel / ICP ───────────────────────────────────────────────
@@ -901,11 +913,12 @@ def build_eod_data(rolling_data, today):
 
 
 def format_eod_email(data):
-    """Format the EOD email subject and plain-text body."""
+    """Format the EOD email — returns (subject, plain_text, html)."""
     today    = data["today"]
-    date_str = today.strftime("%-m/%-d")  # e.g. "3/17"
+    date_str = today.strftime("%-m/%-d")
+    day_full = today.strftime("%A, %B %-d, %Y")
 
-    # Revenue formatting: $42,500 → "$42.5k"
+    # Revenue
     rev = data["revenue"]
     if rev >= 1_000_000:
         rev_str = f"${rev / 1_000_000:.2f}M"
@@ -920,33 +933,96 @@ def format_eod_email(data):
         closer_parts.append(f"{name} x{count}" if count > 1 else name)
     closers_str = ", ".join(closer_parts) if closer_parts else "None"
 
-    # Funnel / ICP block
-    icp_block = (
+    # ICP lines
+    icp_lines_plain = (
         "\n".join(f"* {line}" for line in data["icp_lines"])
         if data["icp_lines"] else "* None"
     )
 
     subject = f"EOD Stats {date_str}"
-    body = (
-        f"EOD stats for {date_str}:\n"
-        f"\n"
+
+    # ── Plain text ────────────────────────────────────────────────────────────
+    plain = (
+        f"EOD stats for {date_str}:\n\n"
         f"Revenue: {rev_str}\n"
         f"Deals Closed: {data['deals']}\n"
         f"Closers: {closers_str}\n"
         f"Todays new meetings: {data['today_count']}\n"
         f"Show rate: {data['show_rate']:.0f}%\n"
-        f"New meetings set for tomorrow: {data['tomorrow_count']}\n"
-        f"\n"
-        f"Closed won funnel / ICP:\n"
-        f"{icp_block}\n"
+        f"New meetings set for tomorrow: {data['tomorrow_count']}\n\n"
+        f"Closed won funnel / ICP:\n{icp_lines_plain}\n"
     )
-    return subject, body
+
+    # ── HTML ──────────────────────────────────────────────────────────────────
+    icp_rows = "".join(
+        f'<tr><td style="padding:6px 0;border-bottom:1px solid #f0f0f0;color:#333;font-size:14px;">📌 {line}</td></tr>'
+        for line in data["icp_lines"]
+    ) if data["icp_lines"] else '<tr><td style="padding:6px 0;color:#999;font-size:14px;">None</td></tr>'
+
+    def stat_row(label, value, value_color="#1a1a1a"):
+        return f"""
+        <tr>
+          <td style="padding:10px 0;border-bottom:1px solid #f5f5f5;color:#666;font-size:13px;width:220px;">{label}</td>
+          <td style="padding:10px 0;border-bottom:1px solid #f5f5f5;color:{value_color};font-size:14px;font-weight:600;">{value}</td>
+        </tr>"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#f4f4f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f4;padding:32px 16px;">
+    <tr><td align="center">
+      <table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;">
+
+        <!-- Header -->
+        <tr><td style="background:#1b2e1b;border-radius:8px 8px 0 0;padding:24px 28px;">
+          <p style="margin:0;color:#a3c4a3;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">Call Capacity Dashboard</p>
+          <h1 style="margin:6px 0 0;color:#ffffff;font-size:22px;font-weight:700;">EOD Stats — {date_str}</h1>
+          <p style="margin:4px 0 0;color:#a3c4a3;font-size:12px;">{day_full}</p>
+        </td></tr>
+
+        <!-- Main stats -->
+        <tr><td style="background:#ffffff;padding:24px 28px;">
+          <p style="margin:0 0 14px;font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#1b5e1b;border-left:3px solid #1b5e1b;padding-left:8px;">TODAY'S NUMBERS</p>
+          <table width="100%" cellpadding="0" cellspacing="0">
+            {stat_row("💰 Revenue", rev_str, "#1b7a2e")}
+            {stat_row("🤝 Deals Closed", str(data['deals']))}
+            {stat_row("👤 Closers", closers_str)}
+            {stat_row("📅 New Meetings Today", str(data['today_count']))}
+            {stat_row("✅ Show Rate", f"{data['show_rate']:.0f}%")}
+            {stat_row("📆 Meetings Set for Tomorrow", str(data['tomorrow_count']))}
+          </table>
+        </td></tr>
+
+        <!-- Divider -->
+        <tr><td style="background:#ffffff;padding:0 28px;"><hr style="border:none;border-top:1px solid #ececec;margin:0;"></td></tr>
+
+        <!-- ICP block -->
+        <tr><td style="background:#ffffff;padding:20px 28px 28px;border-radius:0 0 8px 8px;">
+          <p style="margin:0 0 12px;font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#1b5e1b;border-left:3px solid #1b5e1b;padding-left:8px;">CLOSED WON — FUNNEL / ICP</p>
+          <table width="100%" cellpadding="0" cellspacing="0">
+            {icp_rows}
+          </table>
+        </td></tr>
+
+        <!-- Footer -->
+        <tr><td style="padding:16px 0 0;text-align:center;">
+          <p style="margin:0;color:#aaa;font-size:11px;">Auto-generated by Call Capacity Dashboard · <a href="https://stephenolivas.github.io/call-capacity-dashboard/index.html" style="color:#1b7a2e;text-decoration:none;">View Dashboard →</a></p>
+        </td></tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>"""
+
+    return subject, plain, html
 
 
 def send_eod_email(rolling_data, today):
     """
     Build and send the EOD email via Resend.
-    Called from main() only when it's 8pm PT on a weekday.
+    Called from main() only when it's 8pm PT on a weekday (or FORCE_EOD_EMAIL=true).
     All failures are caught and logged — they will never crash the dashboard run.
     """
     if not RESEND_API_KEY:
@@ -961,8 +1037,8 @@ def send_eod_email(rolling_data, today):
 
     log("\n═══ EOD Email ═══")
     try:
-        data          = build_eod_data(rolling_data, today)
-        subject, body = format_eod_email(data)
+        data                = build_eod_data(rolling_data, today)
+        subject, plain, html = format_eod_email(data)
 
         log(f"   Sending: '{subject}' → {EMAIL_TO}")
 
@@ -976,7 +1052,8 @@ def send_eod_email(rolling_data, today):
                 "from":    EMAIL_FROM,
                 "to":      EMAIL_TO,
                 "subject": subject,
-                "text":    body,
+                "text":    plain,
+                "html":    html,
             },
             timeout=30,
         )
