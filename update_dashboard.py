@@ -752,9 +752,9 @@ def generate_archive_html(archive_dir):
 #
 # ─────────────────────────────────────────────────────────────────────────────
 
-RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
-EMAIL_FROM     = os.environ.get("EMAIL_FROM", "")
-EMAIL_TO       = [e.strip() for e in os.environ.get("EMAIL_TO", "").split(",") if e.strip()]
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
+EMAIL_FROM         = os.environ.get("EMAIL_FROM", "")
+EMAIL_TO           = [e.strip() for e in os.environ.get("EMAIL_TO", "").split(",") if e.strip()]
 
 # ── Field IDs used only by the EOD email ─────────────────────────────────────
 
@@ -1021,12 +1021,16 @@ def format_eod_email(data):
 
 def send_eod_email(rolling_data, today):
     """
-    Build and send the EOD email via Resend.
+    Build and send the EOD email via Gmail SMTP.
     Called from main() only when it's 8pm PT on a weekday (or FORCE_EOD_EMAIL=true).
     All failures are caught and logged — they will never crash the dashboard run.
     """
-    if not RESEND_API_KEY:
-        log("⚠ EOD Email: RESEND_API_KEY not set — skipping.")
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    if not GMAIL_APP_PASSWORD:
+        log("⚠ EOD Email: GMAIL_APP_PASSWORD not set — skipping.")
         return
     if not EMAIL_TO:
         log("⚠ EOD Email: EMAIL_TO not set — skipping.")
@@ -1037,31 +1041,23 @@ def send_eod_email(rolling_data, today):
 
     log("\n═══ EOD Email ═══")
     try:
-        data                = build_eod_data(rolling_data, today)
+        data                 = build_eod_data(rolling_data, today)
         subject, plain, html = format_eod_email(data)
 
         log(f"   Sending: '{subject}' → {EMAIL_TO}")
 
-        resp = requests.post(
-            "https://api.resend.com/emails",
-            headers={
-                "Authorization": f"Bearer {RESEND_API_KEY}",
-                "Content-Type":  "application/json",
-            },
-            json={
-                "from":    EMAIL_FROM,
-                "to":      EMAIL_TO,
-                "subject": subject,
-                "text":    plain,
-                "html":    html,
-            },
-            timeout=30,
-        )
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"]    = f"EOD Reports <{EMAIL_FROM}>"
+        msg["To"]      = ", ".join(EMAIL_TO)
+        msg.attach(MIMEText(plain, "plain"))
+        msg.attach(MIMEText(html,  "html"))
 
-        if resp.status_code in (200, 201):
-            log(f"✅ EOD email sent to {EMAIL_TO}")
-        else:
-            log(f"❌ EOD email failed: {resp.status_code} — {resp.text}")
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+            smtp.login(EMAIL_FROM, GMAIL_APP_PASSWORD)
+            smtp.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
+
+        log(f"✅ EOD email sent to {EMAIL_TO}")
 
     except Exception as e:
         log(f"❌ EOD email error (dashboard unaffected): {e}")
