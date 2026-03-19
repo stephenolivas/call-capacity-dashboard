@@ -1,0 +1,28 @@
+name: EOD Email — Manual Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  send-eod-email:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run dashboard + force EOD email
+        env:
+          CLOSE_API_KEY:    ${{ secrets.CLOSE_API_KEY }}
+          RESEND_API_KEY:   ${{ secrets.RESEND_API_KEY }}
+          EMAIL_FROM:       ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO:         ${{ secrets.EMAIL_TO }}
+          FORCE_EOD_EMAIL:  "true"
+        run: python update_dashboard.py
