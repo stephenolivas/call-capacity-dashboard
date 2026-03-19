@@ -454,7 +454,7 @@ def generate_rolling_html(data, exclude_other, counts):
     daily = data["daily_data"]
     today = data["today"]
 
-    now_pacific = datetime.now(PACIFIC)
+    now_ = datetime.now(PACIFIC)
     last_updated = now_pacific.strftime("%I:%M %p %Z")
     last_updated_date = now_pacific.strftime("%A, %B %-d, %Y")
 
@@ -1068,7 +1068,7 @@ def main():
     log("✅ archive.html regenerated")
 
     # ── EOD Email (8pm PT, M-F only) ──
-    if datetime.now(PACIFIC).hour == 20 and today.weekday() < 5:
+    if datetime.now(PACIFIC).hour == 20 and today.weekday() < 5 or os.environ.get("FORCE_EOD_EMAIL") == "true":
         send_eod_email(rolling_data, today)
 
     elapsed = time.time() - start_time
