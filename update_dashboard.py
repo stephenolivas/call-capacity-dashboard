@@ -1079,6 +1079,7 @@ def main():
     now_at_start = datetime.now(PACIFIC)
     today        = now_at_start.date()
     run_hour     = now_at_start.hour
+    run_minute   = now_at_start.minute
     run_weekday  = today.weekday()
     log(f"📅 Today: {today} ({today.strftime('%A')}) · Run started: {now_at_start.strftime('%I:%M %p %Z')}")
     Path(ARCHIVE_DIR).mkdir(exist_ok=True)
@@ -1161,6 +1162,10 @@ def main():
     # 1pm PT → mirrors Friday 4pm Joe logic (single recipient, off-peak hour)
     if run_hour == 13:
         log("\n═══ 1pm Test Email (Stephen) ═══")
+        send_eod_email(rolling_data, today, ["stephen@modern-amenities.com"])
+    # 1:30pm PT → additional timing check
+    if run_hour == 13 and run_minute >= 30:
+        log("\n═══ 1:30pm Test Email (Stephen) ═══")
         send_eod_email(rolling_data, today, ["stephen@modern-amenities.com"])
     # 2pm PT → mirrors 8pm full-list logic (single recipient, off-peak hour)
     if run_hour == 14:
