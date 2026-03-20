@@ -1149,20 +1149,15 @@ def main():
 
     # ── EOD Email (8pm PT, M-F — or forced via FORCE_EOD_EMAIL=true for testing) ──
     force_email = os.environ.get("FORCE_EOD_EMAIL", "").lower() == "true"
-    if (run_hour == 20 and run_weekday < 5) or force_email:
+    if (run_hour == 20 and run_weekday < 5 and run_minute < 15) or force_email:
         send_eod_email(rolling_data, today, EMAIL_TO)
 
     # ── Friday 4pm PT — send to Joe only ──
-    if run_hour == 16 and run_weekday == 4:
+    if run_hour == 16 and run_weekday == 4 and run_minute < 15:
         joe_email = "joedysert@modern-amenities.com"
         log("\n═══ Friday 4pm Email (Joe) ═══")
         send_eod_email(rolling_data, today, [joe_email])
 
-    # ── TEMPORARY TEST SENDS — delete after confirming timing works ──
-    # 1pm PT → mirrors Friday 4pm Joe logic (single recipient, off-peak hour)
-    if run_hour == 13:
-        log("\n═══ 1pm Test Email (Stephen) ═══")
-        send_eod_email(rolling_data, today, ["stephen@modern-amenities.com"])
     # 1:30pm PT → additional timing check
     if run_hour == 13 and run_minute >= 30:
         log("\n═══ 1:30pm Test Email (Stephen) ═══")
