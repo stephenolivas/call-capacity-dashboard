@@ -1157,6 +1157,16 @@ def main():
         log("\n═══ Friday 4pm Email (Joe) ═══")
         send_eod_email(rolling_data, today, [joe_email])
 
+    # ── TEMPORARY TEST SENDS — delete after confirming timing works ──
+    # 1pm PT → mirrors Friday 4pm Joe logic (single recipient, off-peak hour)
+    if run_hour == 13:
+        log("\n═══ 1pm Test Email (Stephen) ═══")
+        send_eod_email(rolling_data, today, ["stephen@modern-amenities.com"])
+    # 2pm PT → mirrors 8pm full-list logic (single recipient, off-peak hour)
+    if run_hour == 14:
+        log("\n═══ 2pm Test Email (Stephen) ═══")
+        send_eod_email(rolling_data, today, ["stephen@modern-amenities.com"])
+
     elapsed = time.time() - start_time
     log(f"\n🏁 Done! API calls: {_api_call_count} | Time: {elapsed:.1f}s")
 
