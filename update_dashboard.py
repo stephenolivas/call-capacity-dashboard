@@ -1074,8 +1074,13 @@ def main():
     _api_call_count = 0; start_time = time.time()
     log("🚀 Starting Call Capacity Dashboard update (v13 — funnel goals + sections)...")
 
-    today = datetime.now(PACIFIC).date()
-    log(f"📅 Today: {today} ({today.strftime('%A')})")
+    # Capture time NOW before the ~5 min API calls, so hour checks at the end
+    # reflect when this run *started*, not when it finished.
+    now_at_start = datetime.now(PACIFIC)
+    today        = now_at_start.date()
+    run_hour     = now_at_start.hour
+    run_weekday  = today.weekday()
+    log(f"📅 Today: {today} ({today.strftime('%A')}) · Run started: {now_at_start.strftime('%I:%M %p %Z')}")
     Path(ARCHIVE_DIR).mkdir(exist_ok=True)
 
     all_meetings = fetch_all_meetings()
@@ -1143,11 +1148,11 @@ def main():
 
     # ── EOD Email (8pm PT, M-F — or forced via FORCE_EOD_EMAIL=true for testing) ──
     force_email = os.environ.get("FORCE_EOD_EMAIL", "").lower() == "true"
-    if (datetime.now(PACIFIC).hour == 20 and today.weekday() < 5) or force_email:
+    if (run_hour == 20 and run_weekday < 5) or force_email:
         send_eod_email(rolling_data, today, EMAIL_TO)
 
     # ── Friday 4pm PT — send to Joe only ──
-    if datetime.now(PACIFIC).hour == 16 and today.weekday() == 4:
+    if run_hour == 16 and run_weekday == 4:
         joe_email = "joedysert@modern-amenities.com"
         log("\n═══ Friday 4pm Email (Joe) ═══")
         send_eod_email(rolling_data, today, [joe_email])
