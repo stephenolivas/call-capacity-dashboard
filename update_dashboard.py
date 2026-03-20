@@ -53,7 +53,7 @@ FUNNEL_CONFIG = [
     # ── External ──
     {"name": "Low Ticket Funnel",       "close_values": ["Low Ticket Funnel"], "monthly_goal": 400, "section": "external"},
     {"name": "Instagram",               "close_values": ["Instagram"],         "monthly_goal": 240, "section": "external"},
-    {"name": "YouTube",                 "close_values": ["YouTube - OG - Cam"],"monthly_goal": 80,  "section": "external"},
+    {"name": "YouTube",                 "close_values": ["YouTube - OG - Cam"],"monthly_goal": 80,  "section": "inhouse"},
     {"name": "X",                       "close_values": ["X"],                 "monthly_goal": 30,  "section": "external"},
     {"name": "Linkedin",                "close_values": ["Linkedin"],          "monthly_goal": 30,  "section": "external"},
     {"name": "Instagram Setter",        "close_values": ["Instagram Setter"],  "monthly_goal": None, "section": "external"},
