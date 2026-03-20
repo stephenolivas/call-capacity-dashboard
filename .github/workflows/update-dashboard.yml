@@ -25,8 +25,11 @@ jobs:
 
       - name: Run dashboard update
         env:
-          CLOSE_API_KEY: ${{ secrets.CLOSE_API_KEY }}
-          PYTHONUNBUFFERED: "1"
+          CLOSE_API_KEY:      ${{ secrets.CLOSE_API_KEY }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          EMAIL_FROM:         ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO:           ${{ secrets.EMAIL_TO }}
+          PYTHONUNBUFFERED:   "1"
         run: python -u update_dashboard.py
 
       - name: Commit and push changes
