@@ -1147,25 +1147,17 @@ def main():
     with open("archive.html", "w", encoding="utf-8") as f: f.write(ah)
     log("✅ archive.html regenerated")
 
-    # ── EOD Email (8pm PT, M-F — or forced via FORCE_EOD_EMAIL=true for testing) ──
+    # ── EOD Email (8pm PT, M-F only — or forced via FORCE_EOD_EMAIL=true for testing) ──
+    # run_minute < 15 ensures only the first run of the hour fires, not all 4.
+    # run_weekday < 5 ensures M-F only (0=Mon ... 4=Fri, 5=Sat, 6=Sun).
     force_email = os.environ.get("FORCE_EOD_EMAIL", "").lower() == "true"
     if (run_hour == 20 and run_weekday < 5 and run_minute < 15) or force_email:
         send_eod_email(rolling_data, today, EMAIL_TO)
 
     # ── Friday 4pm PT — send to Joe only ──
     if run_hour == 16 and run_weekday == 4 and run_minute < 15:
-        joe_email = "joedysert@modern-amenities.com"
         log("\n═══ Friday 4pm Email (Joe) ═══")
-        send_eod_email(rolling_data, today, [joe_email])
-
-    # 1:30pm PT → additional timing check
-    if run_hour == 13 and run_minute >= 30:
-        log("\n═══ 1:30pm Test Email (Stephen) ═══")
-        send_eod_email(rolling_data, today, ["stephen@modern-amenities.com"])
-    # 2pm PT → mirrors 8pm full-list logic (single recipient, off-peak hour)
-    if run_hour == 14:
-        log("\n═══ 2pm Test Email (Stephen) ═══")
-        send_eod_email(rolling_data, today, ["stephen@modern-amenities.com"])
+        send_eod_email(rolling_data, today, ["joedysert@modern-amenities.com"])
 
     elapsed = time.time() - start_time
     log(f"\n🏁 Done! API calls: {_api_call_count} | Time: {elapsed:.1f}s")
