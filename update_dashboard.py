@@ -359,7 +359,7 @@ def build_dashboard_data(meetings, lead_cache, dates, today=None):
 
 def build_ltf_detail(closer_data, setter_meetings, lead_cache, dates):
     """
-    Build LTF closer vs setter breakdown per day.
+    Build LTF closer vs setter breakdown per day, plus no-funnel setter calls.
     closer_data: the main dashboard data (already built)
     setter_meetings: raw setter meetings (from classify_setter_meetings)
     lead_cache: shared lead cache
@@ -369,11 +369,12 @@ def build_ltf_detail(closer_data, setter_meetings, lead_cache, dates):
     ltf_daily = {}
     for d in dates:
         closer_count = closer_data["daily_data"][d]["funnels"].get("Low Ticket Funnel", 0)
-        ltf_daily[d] = {"closer": closer_count, "setter": 0, "total": closer_count}
+        ltf_daily[d] = {"closer": closer_count, "setter": 0, "total": closer_count, "no_funnel": 0}
 
-    # Build setter counts — resolve funnel, dedup by lead/day, filter to LTF
+    # Build setter counts — resolve funnel, dedup by lead/day
     seen = set()
     setter_count_total = 0
+    no_funnel_total = 0
     for m in setter_meetings:
         lead_id = m.get("lead_id")
         if not lead_id:
@@ -390,17 +391,19 @@ def build_ltf_detail(closer_data, setter_meetings, lead_cache, dates):
 
         # Check funnel
         lead_data = lead_cache.get(lead_id)
-        if not lead_data:
-            continue
-        raw_funnel = (lead_data.get(FIELD_FUNNEL_NAME_DEAL) or "").strip()
-        if raw_funnel != "Low Ticket Funnel":
-            continue
+        raw_funnel = (lead_data.get(FIELD_FUNNEL_NAME_DEAL) if lead_data else None) or ""
+        raw_funnel = raw_funnel.strip()
 
-        ltf_daily[meeting_date]["setter"] += 1
-        ltf_daily[meeting_date]["total"] += 1
-        setter_count_total += 1
+        if not raw_funnel:
+            # No funnel assigned — track separately
+            ltf_daily[meeting_date]["no_funnel"] += 1
+            no_funnel_total += 1
+        elif raw_funnel == "Low Ticket Funnel":
+            ltf_daily[meeting_date]["setter"] += 1
+            ltf_daily[meeting_date]["total"] += 1
+            setter_count_total += 1
 
-    log(f"   📊 LTF Detail: {setter_count_total} setter calls across window")
+    log(f"   📊 LTF Detail: {setter_count_total} LTF setter calls, {no_funnel_total} no-funnel discovery calls")
     return ltf_daily
 
 
@@ -462,6 +465,11 @@ tr.section-label-row.sec-ltf td { color: #1b3a5e; background: #f0f4ff; border-to
 .ltf-setter { color: #2563eb; font-weight: 600; }
 .ltf-total { color: #1a1a1a; font-weight: 700; }
 .ltf-pct { color: #666; font-weight: 500; font-size: 0.7rem; }
+.ltf-collapsible { margin-bottom: 1rem; }
+.ltf-collapsible summary { font-size: 0.72rem; font-weight: 600; color: #1b3a5e; cursor: pointer; padding: 0.5rem 0.6rem; background: #f0f4ff; border: 1px solid #d4d4d4; border-radius: 4px; }
+.ltf-collapsible summary:hover { background: #e4eaff; }
+.ltf-collapsible details[open] summary { border-radius: 4px 4px 0 0; border-bottom: none; }
+.ltf-collapsible details[open] .card { margin-top: 0 !important; border-top: none; border-radius: 0 0 4px 4px; }
 @media (max-width: 900px) { .header { padding: 0.6rem 0.75rem; } .wrap { padding: 0.5rem 0.75rem; } .summary-cards { grid-template-columns: 1fr; } }
 """
 
@@ -611,16 +619,21 @@ def generate_rolling_html(data, exclude_other, counts, ltf_daily=None):
         te = item["title"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         excluded_rows += f'<tr><td class="label">{te}</td><td class="num">{item["date"]}</td></tr>\n'
 
-    # LTF Detail section
+    # LTF Detail section (collapsible)
     ltf_html = ""
     if ltf_daily:
-        ltf_closer_r = ltf_setter_r = ltf_total_r = ltf_pct_r = ""
+        ltf_closer_r = ltf_setter_r = ltf_total_r = ltf_pct_r = ltf_nofunnel_r = ""
+        window_closer = window_setter = window_nofunnel = 0
         for d in dates:
             t = tc(d)
-            ld = ltf_daily.get(d, {"closer": 0, "setter": 0, "total": 0})
+            ld = ltf_daily.get(d, {"closer": 0, "setter": 0, "total": 0, "no_funnel": 0})
             c_count = ld["closer"]
             s_count = ld["setter"]
             t_count = ld["total"]
+            nf_count = ld["no_funnel"]
+            window_closer += c_count
+            window_setter += s_count
+            window_nofunnel += nf_count
 
             if c_count > 0:
                 ltf_closer_r += f'<td class="num ltf-closer{t}">{c_count}</td>'
@@ -644,17 +657,29 @@ def generate_rolling_html(data, exclude_other, counts, ltf_daily=None):
             else:
                 ltf_pct_r += f'<td class="num zero{t}">–</td>'
 
+            if nf_count > 0:
+                nf_cls = f"num{t}"
+                ltf_nofunnel_r += f'<td class="{nf_cls}" style="color:#b45309;font-weight:600;">{nf_count}</td>'
+            else:
+                ltf_nofunnel_r += f'<td class="num zero{t}">0</td>'
+
+        ltf_summary = f"LTF Detail — Closer: {window_closer} · Setter: {window_setter} · No Funnel: {window_nofunnel}"
         ltf_html = f"""
-  <div class="card">
-    <div class="sec sec-ltf">LTF DETAIL — CLOSER VS SETTER</div>
-    <table><colgroup><col style="width:170px"><col span="{n_cols}"></colgroup>
-      <tbody>
-        <tr><td class="metric">Closer Calls</td>{ltf_closer_r}</tr>
-        <tr><td class="metric">Setter Calls</td>{ltf_setter_r}</tr>
-        <tr class="total-row"><td class="metric">LTF Total</td>{ltf_total_r}</tr>
-        <tr><td class="metric">Closer % / Setter %</td>{ltf_pct_r}</tr>
-      </tbody>
-    </table>
+  <div class="ltf-collapsible">
+    <details>
+      <summary>{ltf_summary}</summary>
+      <div class="card" style="margin-top:0.5rem;">
+        <table><colgroup><col style="width:170px"><col span="{n_cols}"></colgroup>
+          <tbody>
+            <tr><td class="metric">Closer Calls</td>{ltf_closer_r}</tr>
+            <tr><td class="metric">Setter Calls</td>{ltf_setter_r}</tr>
+            <tr class="total-row"><td class="metric">LTF Total</td>{ltf_total_r}</tr>
+            <tr><td class="metric">Closer % / Setter %</td>{ltf_pct_r}</tr>
+            <tr style="border-top:2px solid #e0e0e0;"><td class="metric" style="color:#b45309;">Discovery w/ No Funnel</td>{ltf_nofunnel_r}</tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
   </div>"""
 
     wd = working_days_in_month(year, month)
