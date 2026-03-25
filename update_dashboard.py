@@ -37,6 +37,18 @@ EXCLUDED_USER_IDS = {
     "user_yRF070m26JE67J6CJqzkAB3IqY7btNm1K5RisCglKa6",
 }
 
+# Setter/discovery users — excluded from main count but tracked for LTF detail
+SETTER_USER_IDS = {
+    "user_EmhqCmaHERTfgfWnPADiLGEqQw3ENvRYd3u1VEmblIp",  # Kristin Nelson
+    "user_4sfuKGMbv0LQZ4hpS8ipASv406kKTSNP5Xx79jOwSqM",  # Spencer Reynolds
+}
+
+# Non-sales users — truly excluded from everything (no setter tracking either)
+HARD_EXCLUDED_USER_IDS = {
+    "user_5cZRqXu8kb4O1IeBVA98UMcMEhYZUhx1fnCHfSL0YMV",  # Stephen Olivas
+    "user_yRF070m26JE67J6CJqzkAB3IqY7btNm1K5RisCglKa6",  # Ahmad Bukhari
+}
+
 FIELD_FUNNEL_NAME_DEAL = "custom.cf_xqDQE8fkPsWa0RNEve7hcaxKblCe6489XeZGRDzyPdX"
 LEAD_FIELDS = ",".join(["id", "display_name", "name", FIELD_FUNNEL_NAME_DEAL])
 
@@ -230,6 +242,44 @@ def classify_meetings(all_meetings, start_date, end_date):
     return included, exclude_other_titles, counts
 
 
+def classify_setter_meetings(all_meetings, start_date, end_date):
+    """
+    Capture meetings from setter users (Kristin/Spencer) for LTF detail.
+    These are excluded from the main count but tracked separately.
+    Same date/status/title-exclude filters, but only setter user meetings.
+    """
+    setter_included = []
+    for m in all_meetings:
+        meeting_date = parse_meeting_date_pacific(m)
+        if not meeting_date or meeting_date < start_date or meeting_date >= end_date:
+            continue
+        # Same status filter
+        meeting_status = (m.get("status") or "").lower().strip()
+        if meeting_status.startswith("canceled") or meeting_status.startswith("declined"):
+            continue
+        # Only setter users
+        uid = m.get("user_id", "")
+        ulist = m.get("users", [])
+        is_setter = uid in SETTER_USER_IDS or any(u in SETTER_USER_IDS for u in (ulist or []))
+        if not is_setter:
+            continue
+        # Skip hard-excluded users (shouldn't overlap, but safety)
+        if uid in HARD_EXCLUDED_USER_IDS or any(u in HARD_EXCLUDED_USER_IDS for u in (ulist or [])):
+            continue
+        # Title-level excludes (follow-ups, rescheduled, canceled prefix, enrollment)
+        title = m.get("title", "")
+        if title.strip().lower().startswith("canceled"):
+            continue
+        if EXCLUDE_FOLLOW_UP_RE.search(title):
+            continue
+        if EXCLUDE_AMBIGUOUS_RE.search(title):
+            continue
+        # Everything else from setters counts (discovery calls, consults, etc.)
+        m["_meeting_date"] = meeting_date
+        setter_included.append(m)
+    return setter_included
+
+
 def fetch_leads_for_meetings(meetings):
     step_start = time.time()
     unique_ids = list(set(m["lead_id"] for m in meetings if m.get("lead_id")))
@@ -307,6 +357,53 @@ def build_dashboard_data(meetings, lead_cache, dates, today=None):
     }
 
 
+def build_ltf_detail(closer_data, setter_meetings, lead_cache, dates):
+    """
+    Build LTF closer vs setter breakdown per day.
+    closer_data: the main dashboard data (already built)
+    setter_meetings: raw setter meetings (from classify_setter_meetings)
+    lead_cache: shared lead cache
+    dates: list of dates to cover
+    """
+    # Closer counts come from the existing dashboard data
+    ltf_daily = {}
+    for d in dates:
+        closer_count = closer_data["daily_data"][d]["funnels"].get("Low Ticket Funnel", 0)
+        ltf_daily[d] = {"closer": closer_count, "setter": 0, "total": closer_count}
+
+    # Build setter counts — resolve funnel, dedup by lead/day, filter to LTF
+    seen = set()
+    setter_count_total = 0
+    for m in setter_meetings:
+        lead_id = m.get("lead_id")
+        if not lead_id:
+            continue
+        meeting_date = m.get("_meeting_date")
+        if not meeting_date or meeting_date not in ltf_daily:
+            continue
+
+        # Dedup by lead_id per date (same as main pipeline)
+        key = (meeting_date, lead_id)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        # Check funnel
+        lead_data = lead_cache.get(lead_id)
+        if not lead_data:
+            continue
+        raw_funnel = (lead_data.get(FIELD_FUNNEL_NAME_DEAL) or "").strip()
+        if raw_funnel != "Low Ticket Funnel":
+            continue
+
+        ltf_daily[meeting_date]["setter"] += 1
+        ltf_daily[meeting_date]["total"] += 1
+        setter_count_total += 1
+
+    log(f"   📊 LTF Detail: {setter_count_total} setter calls across window")
+    return ltf_daily
+
+
 # ─── Shared CSS ──────────────────────────────────────────────────────────────
 
 COMMON_CSS = """
@@ -359,6 +456,12 @@ tr.section-label-row.sec-unc td { color: #666; background: #f5f5f5; border-top: 
 .s-card .s-label { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: #666; margin-bottom: 0.3rem; }
 .s-card .s-value { font-family: 'JetBrains Mono', monospace; font-size: 1.5rem; font-weight: 700; }
 .s-card .s-value.green { color: #1b7a2e; }
+.sec-ltf { color: #1b3a5e; border-left-color: #2563eb; background: #f0f4ff; }
+tr.section-label-row.sec-ltf td { color: #1b3a5e; background: #f0f4ff; border-top: 2px solid #d4d4d4; }
+.ltf-closer { color: #1b7a2e; font-weight: 600; }
+.ltf-setter { color: #2563eb; font-weight: 600; }
+.ltf-total { color: #1a1a1a; font-weight: 700; }
+.ltf-pct { color: #666; font-weight: 500; font-size: 0.7rem; }
 @media (max-width: 900px) { .header { padding: 0.6rem 0.75rem; } .wrap { padding: 0.5rem 0.75rem; } .summary-cards { grid-template-columns: 1fr; } }
 """
 
@@ -449,7 +552,7 @@ def build_uncategorized_rows(data, dates, today):
 
 # ─── Rolling Dashboard HTML ─────────────────────────────────────────────────
 
-def generate_rolling_html(data, exclude_other, counts):
+def generate_rolling_html(data, exclude_other, counts, ltf_daily=None):
     dates = data["dates"]
     daily = data["daily_data"]
     today = data["today"]
@@ -508,6 +611,52 @@ def generate_rolling_html(data, exclude_other, counts):
         te = item["title"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         excluded_rows += f'<tr><td class="label">{te}</td><td class="num">{item["date"]}</td></tr>\n'
 
+    # LTF Detail section
+    ltf_html = ""
+    if ltf_daily:
+        ltf_closer_r = ltf_setter_r = ltf_total_r = ltf_pct_r = ""
+        for d in dates:
+            t = tc(d)
+            ld = ltf_daily.get(d, {"closer": 0, "setter": 0, "total": 0})
+            c_count = ld["closer"]
+            s_count = ld["setter"]
+            t_count = ld["total"]
+
+            if c_count > 0:
+                ltf_closer_r += f'<td class="num ltf-closer{t}">{c_count}</td>'
+            else:
+                ltf_closer_r += f'<td class="num zero{t}">0</td>'
+
+            if s_count > 0:
+                ltf_setter_r += f'<td class="num ltf-setter{t}">{s_count}</td>'
+            else:
+                ltf_setter_r += f'<td class="num zero{t}">0</td>'
+
+            if t_count > 0:
+                ltf_total_r += f'<td class="num ltf-total{t}">{t_count}</td>'
+            else:
+                ltf_total_r += f'<td class="num zero{t}">0</td>'
+
+            if t_count > 0:
+                c_pct = round(c_count / t_count * 100)
+                s_pct = 100 - c_pct
+                ltf_pct_r += f'<td class="num ltf-pct{t}">{c_pct}% / {s_pct}%</td>'
+            else:
+                ltf_pct_r += f'<td class="num zero{t}">–</td>'
+
+        ltf_html = f"""
+  <div class="card">
+    <div class="sec sec-ltf">LTF DETAIL — CLOSER VS SETTER</div>
+    <table><colgroup><col style="width:170px"><col span="{n_cols}"></colgroup>
+      <tbody>
+        <tr><td class="metric">Closer Calls</td>{ltf_closer_r}</tr>
+        <tr><td class="metric">Setter Calls</td>{ltf_setter_r}</tr>
+        <tr class="total-row"><td class="metric">LTF Total</td>{ltf_total_r}</tr>
+        <tr><td class="metric">Closer % / Setter %</td>{ltf_pct_r}</tr>
+      </tbody>
+    </table>
+  </div>"""
+
     wd = working_days_in_month(year, month)
 
     return f"""<!DOCTYPE html>
@@ -545,7 +694,7 @@ def generate_rolling_html(data, exclude_other, counts):
       </tbody>
     </table>
   </div>
-  </div>
+  {ltf_html}
 
   <div class="excluded-section">
     <details>
@@ -1095,7 +1244,23 @@ def main():
     log(f"   INCLUDE: {counts['include']} | EXCLUDE: {counts['exclude']} | STATUS_EXCLUDED: {counts['status_excluded']} | OTHER: {counts['exclude_other']}")
     lead_cache = fetch_leads_for_meetings(included)
     rolling_data = build_dashboard_data(included, lead_cache, rolling_dates, today=today)
-    html = generate_rolling_html(rolling_data, exclude_other, counts)
+
+    # ── LTF Detail (setter calls from Kristin/Spencer) ──
+    log("\n═══ LTF Detail ═══")
+    setter_meetings = classify_setter_meetings(all_meetings, rolling_start, rolling_end)
+    log(f"   Setter meetings in window: {len(setter_meetings)}")
+    # Fetch leads for setter meetings not already cached
+    setter_new_ids = set(m["lead_id"] for m in setter_meetings if m.get("lead_id")) - set(lead_cache.keys())
+    if setter_new_ids:
+        log(f"   Fetching {len(setter_new_ids)} additional leads for setter data...")
+        for lid in setter_new_ids:
+            try:
+                lead_cache[lid] = close_get(f"lead/{lid}", {"_fields": LEAD_FIELDS})
+            except requests.HTTPError:
+                lead_cache[lid] = None
+    ltf_daily = build_ltf_detail(rolling_data, setter_meetings, lead_cache, rolling_dates)
+
+    html = generate_rolling_html(rolling_data, exclude_other, counts, ltf_daily=ltf_daily)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f: f.write(html)
     log(f"✅ {OUTPUT_FILE} written ({len(rolling_data['valid_meetings'])} meetings)")
 
