@@ -663,7 +663,14 @@ def generate_rolling_html(data, exclude_other, counts, ltf_daily=None):
             else:
                 ltf_nofunnel_r += f'<td class="num zero{t}">0</td>'
 
-        ltf_summary = f"LTF Detail — Closer: {window_closer} · Setter: {window_setter} · No Funnel: {window_nofunnel}"
+        ltf_window_total = window_closer + window_setter
+        if ltf_window_total > 0:
+            w_c_pct = round(window_closer / ltf_window_total * 100)
+            w_s_pct = 100 - w_c_pct
+            pct_str = f" · {w_c_pct}% / {w_s_pct}%"
+        else:
+            pct_str = ""
+        ltf_summary = f"LTF Detail — Closer: {window_closer} · Setter: {window_setter} · No Funnel: {window_nofunnel}{pct_str}"
         ltf_html = f"""
   <div class="ltf-collapsible">
     <details>
