@@ -682,7 +682,7 @@ def generate_rolling_html(data, exclude_other, counts, ltf_daily=None):
             <tr><td class="metric">Setter Calls</td>{ltf_setter_r}</tr>
             <tr class="total-row"><td class="metric">LTF Total</td>{ltf_total_r}</tr>
             <tr><td class="metric">Closer % / Setter %</td>{ltf_pct_r}</tr>
-            <tr style="border-top:2px solid #e0e0e0;"><td class="metric" style="color:#b45309;"><a href="https://app.close.com/leads/save_0pf4Svd4OxrDacy9sUSqL0pr9W9243ouu9nA3mzcv4B/" target="_blank" style="color:#b45309;text-decoration:none;border-bottom:1px dashed #b45309;">Discovery w/ No Funnel ↗</a></td>{ltf_nofunnel_r}</tr>
+            <tr style="border-top:2px solid #e0e0e0;"><td class="metric" style="color:#b45309;"><a href="https://app.close.com/leads/save_0pf4Svd4OxrDacy9sUSqL0pr9W9243ouu9nA3mzcv4B/" target="_blank" style="color:#b45309;text-decoration:none;border-bottom:1px dashed #b45309;font-size:0.68rem;">Discovery w/ No Funnel ↗</a></td>{ltf_nofunnel_r}</tr>
           </tbody>
         </table>
       </div>
