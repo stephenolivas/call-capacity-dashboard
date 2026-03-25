@@ -58,12 +58,17 @@ tr.section-label-row.sec-ltf td { color: #1b3a5e; background: #f0f4ff; border-to
 .ltf-setter { color: #2563eb; font-weight: 600; }
 .ltf-total { color: #1a1a1a; font-weight: 700; }
 .ltf-pct { color: #666; font-weight: 500; font-size: 0.7rem; }
+.ltf-collapsible { margin-bottom: 1rem; }
+.ltf-collapsible summary { font-size: 0.72rem; font-weight: 600; color: #1b3a5e; cursor: pointer; padding: 0.5rem 0.6rem; background: #f0f4ff; border: 1px solid #d4d4d4; border-radius: 4px; }
+.ltf-collapsible summary:hover { background: #e4eaff; }
+.ltf-collapsible details[open] summary { border-radius: 4px 4px 0 0; border-bottom: none; }
+.ltf-collapsible details[open] .card { margin-top: 0 !important; border-top: none; border-radius: 0 0 4px 4px; }
 @media (max-width: 900px) { .header { padding: 0.6rem 0.75rem; } .wrap { padding: 0.5rem 0.75rem; } .summary-cards { grid-template-columns: 1fr; } }
 </style>
 </head><body>
 <div class="header">
   <div><h1>📞 Call Capacity Dashboard</h1><div class="sub">3-Day Trailing + 10-Day Lookahead · First Meetings Only · 22 working days in March</div></div>
-  <div class="right"><div class="date"><span class="dot"></span>Wednesday, March 25, 2026</div><div class="time">Last updated: 12:05 PM PDT</div></div>
+  <div class="right"><div class="date"><span class="dot"></span>Wednesday, March 25, 2026</div><div class="time">Last updated: 12:14 PM PDT</div></div>
 </div>
 <div class="wrap">
 
@@ -112,16 +117,21 @@ tr.section-label-row.sec-ltf td { color: #1b3a5e; background: #f0f4ff; border-to
     </table>
   </div>
   
-  <div class="card">
-    <div class="sec sec-ltf">LTF DETAIL — CLOSER VS SETTER</div>
-    <table><colgroup><col style="width:170px"><col span="13"></colgroup>
-      <tbody>
-        <tr><td class="metric">Closer Calls</td><td class="num zero past">0</td><td class="num ltf-closer past">9</td><td class="num ltf-closer past">13</td><td class="num ltf-closer today">6</td><td class="num ltf-closer">5</td><td class="num ltf-closer">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
-        <tr><td class="metric">Setter Calls</td><td class="num zero past">0</td><td class="num ltf-setter past">3</td><td class="num ltf-setter past">3</td><td class="num ltf-setter today">1</td><td class="num ltf-setter">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num ltf-setter">2</td><td class="num ltf-setter">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
-        <tr class="total-row"><td class="metric">LTF Total</td><td class="num zero past">0</td><td class="num ltf-total past">12</td><td class="num ltf-total past">16</td><td class="num ltf-total today">7</td><td class="num ltf-total">6</td><td class="num ltf-total">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num ltf-total">2</td><td class="num ltf-total">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
-        <tr><td class="metric">Closer % / Setter %</td><td class="num zero past">–</td><td class="num ltf-pct past">75% / 25%</td><td class="num ltf-pct past">81% / 19%</td><td class="num ltf-pct today">86% / 14%</td><td class="num ltf-pct">83% / 17%</td><td class="num ltf-pct">100% / 0%</td><td class="num zero">–</td><td class="num zero">–</td><td class="num ltf-pct">0% / 100%</td><td class="num ltf-pct">0% / 100%</td><td class="num zero">–</td><td class="num zero">–</td><td class="num zero">–</td></tr>
-      </tbody>
-    </table>
+  <div class="ltf-collapsible">
+    <details>
+      <summary>LTF Detail — Closer: 34 · Setter: 11 · No Funnel: 36</summary>
+      <div class="card" style="margin-top:0.5rem;">
+        <table><colgroup><col style="width:170px"><col span="13"></colgroup>
+          <tbody>
+            <tr><td class="metric">Closer Calls</td><td class="num zero past">0</td><td class="num ltf-closer past">9</td><td class="num ltf-closer past">13</td><td class="num ltf-closer today">6</td><td class="num ltf-closer">5</td><td class="num ltf-closer">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
+            <tr><td class="metric">Setter Calls</td><td class="num zero past">0</td><td class="num ltf-setter past">3</td><td class="num ltf-setter past">3</td><td class="num ltf-setter today">1</td><td class="num ltf-setter">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td><td class="num ltf-setter">2</td><td class="num ltf-setter">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
+            <tr class="total-row"><td class="metric">LTF Total</td><td class="num zero past">0</td><td class="num ltf-total past">12</td><td class="num ltf-total past">16</td><td class="num ltf-total today">7</td><td class="num ltf-total">6</td><td class="num ltf-total">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num ltf-total">2</td><td class="num ltf-total">1</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr>
+            <tr><td class="metric">Closer % / Setter %</td><td class="num zero past">–</td><td class="num ltf-pct past">75% / 25%</td><td class="num ltf-pct past">81% / 19%</td><td class="num ltf-pct today">86% / 14%</td><td class="num ltf-pct">83% / 17%</td><td class="num ltf-pct">100% / 0%</td><td class="num zero">–</td><td class="num zero">–</td><td class="num ltf-pct">0% / 100%</td><td class="num ltf-pct">0% / 100%</td><td class="num zero">–</td><td class="num zero">–</td><td class="num zero">–</td></tr>
+            <tr style="border-top:2px solid #e0e0e0;"><td class="metric" style="color:#b45309;">Discovery w/ No Funnel</td><td class="num zero past">0</td><td class="num past" style="color:#b45309;font-weight:600;">2</td><td class="num past" style="color:#b45309;font-weight:600;">3</td><td class="num today" style="color:#b45309;font-weight:600;">3</td><td class="num" style="color:#b45309;font-weight:600;">3</td><td class="num" style="color:#b45309;font-weight:600;">2</td><td class="num zero">0</td><td class="num zero">0</td><td class="num" style="color:#b45309;font-weight:600;">2</td><td class="num" style="color:#b45309;font-weight:600;">4</td><td class="num" style="color:#b45309;font-weight:600;">8</td><td class="num" style="color:#b45309;font-weight:600;">5</td><td class="num" style="color:#b45309;font-weight:600;">4</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
   </div>
 
   <div class="excluded-section">
