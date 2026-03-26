@@ -123,7 +123,8 @@ INCLUDE_PATTERNS_RE = re.compile(
     r"vending\s+strategy\s+call"
     r"|vendingpren[eu]+rs?\s+consultation"
     r"|vendingpren[eu]+rs?\s+strategy\s+call"
-    r"|new\s+vendingpreneur\s+strategy\s+call",
+    r"|new\s+vendingpreneur\s+strategy\s+call"
+    r"|post\s+masterclass\s+strategy\s+call",
     re.IGNORECASE
 )
 INCLUDE_AMBIGUOUS_RE = re.compile(r"vending\s+consult", re.IGNORECASE)
