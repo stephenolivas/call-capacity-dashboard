@@ -50,7 +50,13 @@ HARD_EXCLUDED_USER_IDS = {
 }
 
 FIELD_FUNNEL_NAME_DEAL = "custom.cf_xqDQE8fkPsWa0RNEve7hcaxKblCe6489XeZGRDzyPdX"
-LEAD_FIELDS = ",".join(["id", "display_name", "name", FIELD_FUNNEL_NAME_DEAL])
+LEAD_FIELDS = ",".join(["id", "display_name", "name", "status_id", FIELD_FUNNEL_NAME_DEAL])
+
+# Lead statuses excluded from capacity count (matches rep scorecard methodology)
+EXCLUDED_LEAD_STATUS_IDS = {
+    "stat_hWIGHjzyNpl4YjIFSFz3VK4fp2ny10SFJLKAihmo4KT",  # Canceled (by Lead)
+    "stat_YV4ZngDB4IGjLjlOf0YTFEWuKZJ6fhNxVkzQkvKYfdB",  # Outside the US
+}
 
 OUTPUT_FILE = os.environ.get("OUTPUT_FILE", "index.html")
 ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "archive")
@@ -313,28 +319,41 @@ def map_funnel(raw_funnel):
 
 def build_dashboard_data(meetings, lead_cache, dates, today=None):
     valid_meetings = []
+    status_excluded = 0
     for m in meetings:
         lead_id = m.get("lead_id")
         lead_data = lead_cache.get(lead_id) if lead_id else None
+
+        # Exclude leads with Canceled (by Lead) or Outside the US status
+        if lead_data and lead_data.get("status_id") in EXCLUDED_LEAD_STATUS_IDS:
+            status_excluded += 1
+            continue
+
         raw_funnel = (lead_data.get(FIELD_FUNNEL_NAME_DEAL) if lead_data else None) or ""
         funnel = map_funnel(raw_funnel)
         valid_meetings.append({"date": m["_meeting_date"], "title": m.get("title", ""), "funnel": funnel, "lead_id": lead_id or ""})
 
-    # Deduplicate by lead_id per date — one lead = one booking per day
-    seen = set()
-    deduped_meetings = []
-    dupes_removed = 0
+    if status_excluded > 0:
+        log(f"   ⚠ Excluded {status_excluded} meetings (lead status: Canceled/Outside US)")
+
+    # Deduplicate by lead_id across the FULL window — most recent meeting wins.
+    # This matches the rep scorecard methodology: one lead = one count, period.
+    # Group by lead_id, keep the meeting with the latest date.
+    lead_best = {}  # lead_id → meeting dict with the latest date
+    no_lead_meetings = []  # meetings without a lead_id (keep all)
     for m in valid_meetings:
-        key = (m["date"], m["lead_id"])
-        if m["lead_id"] and key in seen:
-            dupes_removed += 1
+        lid = m["lead_id"]
+        if not lid:
+            no_lead_meetings.append(m)
             continue
-        if m["lead_id"]:
-            seen.add(key)
-        deduped_meetings.append(m)
+        if lid not in lead_best or m["date"] > lead_best[lid]["date"]:
+            lead_best[lid] = m
+
+    deduped_meetings = list(lead_best.values()) + no_lead_meetings
+    dupes_removed = len(valid_meetings) - len(deduped_meetings)
 
     if dupes_removed > 0:
-        log(f"   ⚠ Removed {dupes_removed} duplicate lead/day entries")
+        log(f"   ⚠ Deduped {dupes_removed} meetings (cross-window lead dedup, most recent kept)")
 
     daily_data = {}
     all_funnels_seen = set()
@@ -372,10 +391,8 @@ def build_ltf_detail(closer_data, setter_meetings, lead_cache, dates):
         closer_count = closer_data["daily_data"][d]["funnels"].get("Low Ticket Funnel", 0)
         ltf_daily[d] = {"closer": closer_count, "setter": 0, "total": closer_count, "no_funnel": 0}
 
-    # Build setter counts — resolve funnel, dedup by lead/day
-    seen = set()
-    setter_count_total = 0
-    no_funnel_total = 0
+    # Cross-window dedup for setter meetings — most recent wins (matches main pipeline)
+    lead_best = {}  # lead_id → meeting with latest date
     for m in setter_meetings:
         lead_id = m.get("lead_id")
         if not lead_id:
@@ -384,19 +401,24 @@ def build_ltf_detail(closer_data, setter_meetings, lead_cache, dates):
         if not meeting_date or meeting_date not in ltf_daily:
             continue
 
-        # Dedup by lead_id per date (same as main pipeline)
-        key = (meeting_date, lead_id)
-        if key in seen:
+        # Exclude leads with bad statuses
+        lead_data = lead_cache.get(lead_id)
+        if lead_data and lead_data.get("status_id") in EXCLUDED_LEAD_STATUS_IDS:
             continue
-        seen.add(key)
 
-        # Check funnel
+        if lead_id not in lead_best or meeting_date > lead_best[lead_id]["_meeting_date"]:
+            lead_best[lead_id] = m
+
+    # Now categorize each deduped setter meeting
+    setter_count_total = 0
+    no_funnel_total = 0
+    for lead_id, m in lead_best.items():
+        meeting_date = m["_meeting_date"]
         lead_data = lead_cache.get(lead_id)
         raw_funnel = (lead_data.get(FIELD_FUNNEL_NAME_DEAL) if lead_data else None) or ""
         raw_funnel = raw_funnel.strip()
 
         if not raw_funnel:
-            # No funnel assigned — track separately
             ltf_daily[meeting_date]["no_funnel"] += 1
             no_funnel_total += 1
         elif raw_funnel == "Low Ticket Funnel":
