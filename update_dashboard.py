@@ -139,6 +139,15 @@ EXCLUDE_AMBIGUOUS_RE = re.compile(
     re.IGNORECASE
 )
 
+# Scraper "Next Steps" titles — these are legit sales calls booked via scraper outreach.
+# Calendly appends prospect/rep names (e.g. "...with Jimmy and jason aaron").
+# Must be checked BEFORE the follow-up/next-steps exclusion to avoid false exclusion.
+INCLUDE_SCRAPER_RE = re.compile(
+    r"vendingpren[eu]+rs?\s*-?\s*next\s+steps"
+    r"|vendingpreneur\s+next\s+steps",
+    re.IGNORECASE
+)
+
 def classify_meeting_title(title):
     if not title:
         return "exclude_other"
@@ -146,6 +155,9 @@ def classify_meeting_title(title):
         return "exclude"
     if "vending quick discovery" in title.lower():
         return "exclude"
+    # Check scraper "Next Steps" titles BEFORE the follow-up exclusion
+    if INCLUDE_SCRAPER_RE.search(title.strip()):
+        return "include"
     if EXCLUDE_FOLLOW_UP_RE.search(title):
         return "exclude"
     if "anthony" in title.lower() and "q&a" in title.lower():
