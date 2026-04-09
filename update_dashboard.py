@@ -1038,6 +1038,7 @@ def fetch_leads_for_email(lead_ids):
     """
     fields = ",".join([
         "id",
+        "status_id",
         f"custom.{CF_LEAD_OWNER_NAME}",
         f"custom.{CF_SHOW_UP}",
         f"custom.{CF_FUNNEL_DEAL}",
@@ -1083,12 +1084,19 @@ def build_eod_data(rolling_data, today):
     user_map = fetch_close_users()
 
     # ── Show rate ─────────────────────────────────────────────────────────────
-    shown = sum(
-        1 for lid in today_lead_ids
+    # Exclude leads in "Reschedule" status from both numerator and denominator —
+    # they didn't have a chance to show, so including them deflates the rate.
+    RESCHEDULE_STATUS_ID = "stat_2SmOUMCp1vDFJF0TcJ011hNnpLYWDGwugyo4JyiRMEP"
+    showable_ids = [
+        lid for lid in today_lead_ids
         if email_leads.get(lid) and
-           str(email_leads[lid].get(f"custom.{CF_SHOW_UP}", "")).lower() == "yes"
+           email_leads[lid].get("status_id") != RESCHEDULE_STATUS_ID
+    ]
+    shown = sum(
+        1 for lid in showable_ids
+        if str(email_leads[lid].get(f"custom.{CF_SHOW_UP}", "")).lower() == "yes"
     )
-    show_rate = (shown / today_count * 100) if today_count > 0 else 0.0
+    show_rate = (shown / len(showable_ids) * 100) if showable_ids else 0.0
 
     # ── Revenue ───────────────────────────────────────────────────────────────
     # Close stores opportunity `value` in USD cents — divide by 100.
