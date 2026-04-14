@@ -420,39 +420,33 @@ def build_dashboard_data(field_leads, dates, today=None):
     }
 
 
-def build_ltf_detail(closer_data, setter_meetings, lead_cache, dates):
+def build_funnel_detail(closer_data, setter_meetings, lead_cache, dates, close_value, label, track_no_funnel=False):
     """
-    Build LTF closer vs setter breakdown per day, plus no-funnel setter calls.
-    closer_data: the main dashboard data (already built)
-    setter_meetings: raw setter meetings (from classify_setter_meetings)
-    lead_cache: shared lead cache
-    dates: list of dates to cover
+    Build closer vs setter breakdown per day for a specific funnel.
+    close_value: the Close field value to match (e.g., "Low Ticket Funnel", "Instagram")
+    label: display label for logging (e.g., "LTF", "Instagram")
+    track_no_funnel: if True, also count setter calls with no funnel assigned
     """
-    # Closer counts come from the existing dashboard data
-    ltf_daily = {}
+    daily = {}
     for d in dates:
-        closer_count = closer_data["daily_data"][d]["funnels"].get("Low Ticket Funnel", 0)
-        ltf_daily[d] = {"closer": closer_count, "setter": 0, "total": closer_count, "no_funnel": 0}
+        closer_count = closer_data["daily_data"][d]["funnels"].get(map_funnel(close_value), 0)
+        daily[d] = {"closer": closer_count, "setter": 0, "total": closer_count, "no_funnel": 0}
 
-    # Cross-window dedup for setter meetings — most recent wins (matches main pipeline)
-    lead_best = {}  # lead_id → meeting with latest date
+    # Cross-window dedup for setter meetings — most recent wins
+    lead_best = {}
     for m in setter_meetings:
         lead_id = m.get("lead_id")
         if not lead_id:
             continue
         meeting_date = m.get("_meeting_date")
-        if not meeting_date or meeting_date not in ltf_daily:
+        if not meeting_date or meeting_date not in daily:
             continue
-
-        # Exclude leads with bad statuses
         lead_data = lead_cache.get(lead_id)
         if lead_data and lead_data.get("status_id") in EXCLUDED_LEAD_STATUS_IDS:
             continue
-
         if lead_id not in lead_best or meeting_date > lead_best[lead_id]["_meeting_date"]:
             lead_best[lead_id] = m
 
-    # Now categorize each deduped setter meeting
     setter_count_total = 0
     no_funnel_total = 0
     for lead_id, m in lead_best.items():
@@ -461,16 +455,17 @@ def build_ltf_detail(closer_data, setter_meetings, lead_cache, dates):
         raw_funnel = (lead_data.get(FIELD_FUNNEL_NAME_DEAL) if lead_data else None) or ""
         raw_funnel = raw_funnel.strip()
 
-        if not raw_funnel:
-            ltf_daily[meeting_date]["no_funnel"] += 1
+        if not raw_funnel and track_no_funnel:
+            daily[meeting_date]["no_funnel"] += 1
             no_funnel_total += 1
-        elif raw_funnel == "Low Ticket Funnel":
-            ltf_daily[meeting_date]["setter"] += 1
-            ltf_daily[meeting_date]["total"] += 1
+        elif raw_funnel == close_value:
+            daily[meeting_date]["setter"] += 1
+            daily[meeting_date]["total"] += 1
             setter_count_total += 1
 
-    log(f"   📊 LTF Detail: {setter_count_total} LTF setter calls, {no_funnel_total} no-funnel discovery calls")
-    return ltf_daily
+    nf_str = f", {no_funnel_total} no-funnel discovery calls" if track_no_funnel else ""
+    log(f"   📊 {label} Detail: {setter_count_total} setter calls{nf_str}")
+    return daily
 
 
 # ─── Shared CSS ──────────────────────────────────────────────────────────────
@@ -626,7 +621,7 @@ def build_uncategorized_rows(data, dates, today):
 
 # ─── Rolling Dashboard HTML ─────────────────────────────────────────────────
 
-def generate_rolling_html(data, ltf_daily=None):
+def generate_rolling_html(data, ltf_daily=None, ig_daily=None):
     dates = data["dates"]
     daily = data["daily_data"]
     today = data["today"]
@@ -681,75 +676,60 @@ def generate_rolling_html(data, ltf_daily=None):
 
     # (Excluded titles section removed — field-based counting replaces title classification)
 
-    # LTF Detail section (collapsible)
-    ltf_html = ""
-    if ltf_daily:
-        ltf_closer_r = ltf_setter_r = ltf_total_r = ltf_pct_r = ltf_nofunnel_r = ""
-        window_closer = window_setter = window_nofunnel = 0
+    # ── Funnel detail helper (generates collapsible closer/setter section) ──
+    def build_detail_html(detail_daily, label, show_no_funnel=False):
+        if not detail_daily:
+            return ""
+        closer_r = setter_r = total_r = pct_r = nofunnel_r = ""
+        w_closer = w_setter = w_nofunnel = 0
         for d in dates:
             t = tc(d)
-            ld = ltf_daily.get(d, {"closer": 0, "setter": 0, "total": 0, "no_funnel": 0})
-            c_count = ld["closer"]
-            s_count = ld["setter"]
-            t_count = ld["total"]
-            nf_count = ld["no_funnel"]
-            window_closer += c_count
-            window_setter += s_count
-            window_nofunnel += nf_count
+            dd = detail_daily.get(d, {"closer": 0, "setter": 0, "total": 0, "no_funnel": 0})
+            c, s, tot, nf = dd["closer"], dd["setter"], dd["total"], dd["no_funnel"]
+            w_closer += c; w_setter += s; w_nofunnel += nf
 
-            if c_count > 0:
-                ltf_closer_r += f'<td class="num ltf-closer{t}">{c_count}</td>'
+            closer_r  += f'<td class="num ltf-closer{t}">{c}</td>'  if c > 0 else f'<td class="num zero{t}">0</td>'
+            setter_r  += f'<td class="num ltf-setter{t}">{s}</td>'  if s > 0 else f'<td class="num zero{t}">0</td>'
+            total_r   += f'<td class="num ltf-total{t}">{tot}</td>' if tot > 0 else f'<td class="num zero{t}">0</td>'
+
+            if tot > 0:
+                cp = round(c / tot * 100); sp = 100 - cp
+                pct_r += f'<td class="num ltf-pct{t}">{cp}% / {sp}%</td>'
             else:
-                ltf_closer_r += f'<td class="num zero{t}">0</td>'
+                pct_r += f'<td class="num zero{t}">–</td>'
 
-            if s_count > 0:
-                ltf_setter_r += f'<td class="num ltf-setter{t}">{s_count}</td>'
-            else:
-                ltf_setter_r += f'<td class="num zero{t}">0</td>'
+            if show_no_funnel:
+                nofunnel_r += f'<td class="num{t}" style="color:#b45309;font-weight:600;">{nf}</td>' if nf > 0 else f'<td class="num zero{t}">0</td>'
 
-            if t_count > 0:
-                ltf_total_r += f'<td class="num ltf-total{t}">{t_count}</td>'
-            else:
-                ltf_total_r += f'<td class="num zero{t}">0</td>'
+        w_total = w_closer + w_setter
+        pct_str = f" · {round(w_closer / w_total * 100)}% / {100 - round(w_closer / w_total * 100)}%" if w_total > 0 else ""
+        nf_str = f" · No Funnel: {w_nofunnel}" if show_no_funnel else ""
+        summary = f"{label} Detail — Closer: {w_closer} · Setter: {w_setter}{nf_str}{pct_str}"
 
-            if t_count > 0:
-                c_pct = round(c_count / t_count * 100)
-                s_pct = 100 - c_pct
-                ltf_pct_r += f'<td class="num ltf-pct{t}">{c_pct}% / {s_pct}%</td>'
-            else:
-                ltf_pct_r += f'<td class="num zero{t}">–</td>'
+        nf_row = ""
+        if show_no_funnel:
+            nf_row = f"""
+            <tr style="border-top:2px solid #e0e0e0;"><td class="metric" style="color:#b45309;"><a href="https://app.close.com/leads/save_0pf4Svd4OxrDacy9sUSqL0pr9W9243ouu9nA3mzcv4B/" target="_blank" style="color:#b45309;text-decoration:none;border-bottom:1px dashed #b45309;font-size:0.68rem;">Discovery w/ No Funnel ↗</a></td>{nofunnel_r}</tr>"""
 
-            if nf_count > 0:
-                nf_cls = f"num{t}"
-                ltf_nofunnel_r += f'<td class="{nf_cls}" style="color:#b45309;font-weight:600;">{nf_count}</td>'
-            else:
-                ltf_nofunnel_r += f'<td class="num zero{t}">0</td>'
-
-        ltf_window_total = window_closer + window_setter
-        if ltf_window_total > 0:
-            w_c_pct = round(window_closer / ltf_window_total * 100)
-            w_s_pct = 100 - w_c_pct
-            pct_str = f" · {w_c_pct}% / {w_s_pct}%"
-        else:
-            pct_str = ""
-        ltf_summary = f"LTF Detail — Closer: {window_closer} · Setter: {window_setter} · No Funnel: {window_nofunnel}{pct_str}"
-        ltf_html = f"""
+        return f"""
   <div class="ltf-collapsible">
     <details>
-      <summary>{ltf_summary}</summary>
+      <summary>{summary}</summary>
       <div class="card" style="margin-top:0.5rem;">
         <table><colgroup><col style="width:200px"><col span="{n_cols}"></colgroup>
           <tbody>
-            <tr><td class="metric">Closer Calls</td>{ltf_closer_r}</tr>
-            <tr><td class="metric">Setter Calls</td>{ltf_setter_r}</tr>
-            <tr class="total-row"><td class="metric">LTF Total</td>{ltf_total_r}</tr>
-            <tr><td class="metric">Closer % / Setter %</td>{ltf_pct_r}</tr>
-            <tr style="border-top:2px solid #e0e0e0;"><td class="metric" style="color:#b45309;"><a href="https://app.close.com/leads/save_0pf4Svd4OxrDacy9sUSqL0pr9W9243ouu9nA3mzcv4B/" target="_blank" style="color:#b45309;text-decoration:none;border-bottom:1px dashed #b45309;font-size:0.68rem;">Discovery w/ No Funnel ↗</a></td>{ltf_nofunnel_r}</tr>
+            <tr><td class="metric">Closer Calls</td>{closer_r}</tr>
+            <tr><td class="metric">Setter Calls</td>{setter_r}</tr>
+            <tr class="total-row"><td class="metric">{label} Total</td>{total_r}</tr>
+            <tr><td class="metric">Closer % / Setter %</td>{pct_r}</tr>{nf_row}
           </tbody>
         </table>
       </div>
     </details>
   </div>"""
+
+    ltf_html = build_detail_html(ltf_daily, "LTF", show_no_funnel=True)
+    ig_html = build_detail_html(ig_daily, "Instagram", show_no_funnel=False)
 
     wd = working_days_in_month(year, month)
 
@@ -789,6 +769,7 @@ def generate_rolling_html(data, ltf_daily=None):
     </table>
   </div>
   {ltf_html}
+  {ig_html}
 
   <div class="footer">
     <span>Source: First Sales Call Booked Date field · {len(data['valid_meetings'])} leads in window · <a href="archive.html">📁 Archive</a></span>
@@ -1338,8 +1319,8 @@ def main():
     field_leads = fetch_field_leads(rolling_start, rolling_end)
     rolling_data = build_dashboard_data(field_leads, rolling_dates, today=today)
 
-    # ── LTF Detail (setter calls from Kristin/Spencer — still meeting-based) ──
-    log("\n═══ LTF Detail ═══")
+    # ── Funnel Detail (setter calls from Kristin/Spencer — still meeting-based) ──
+    log("\n═══ Funnel Detail (LTF + Instagram) ═══")
     setter_meetings = classify_setter_meetings(all_meetings, rolling_start, rolling_end)
     log(f"   Setter meetings in window: {len(setter_meetings)}")
     setter_lead_cache = {}
@@ -1351,9 +1332,10 @@ def main():
                 setter_lead_cache[lid] = close_get(f"lead/{lid}", {"_fields": LEAD_FIELDS})
             except requests.HTTPError:
                 setter_lead_cache[lid] = None
-    ltf_daily = build_ltf_detail(rolling_data, setter_meetings, setter_lead_cache, rolling_dates)
+    ltf_daily = build_funnel_detail(rolling_data, setter_meetings, setter_lead_cache, rolling_dates, "Low Ticket Funnel", "LTF", track_no_funnel=True)
+    ig_daily = build_funnel_detail(rolling_data, setter_meetings, setter_lead_cache, rolling_dates, "Instagram", "Instagram")
 
-    html = generate_rolling_html(rolling_data, ltf_daily=ltf_daily)
+    html = generate_rolling_html(rolling_data, ltf_daily=ltf_daily, ig_daily=ig_daily)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f: f.write(html)
     log(f"✅ {OUTPUT_FILE} written ({len(rolling_data['valid_meetings'])} leads)")
 
