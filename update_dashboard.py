@@ -87,6 +87,9 @@ FUNNEL_CONFIG = [
     {"name": "Passivepreneurs",         "close_values": ["Passivepreneurs"],   "monthly_goal": None, "section": "inhouse"},
     {"name": "Reactivation Email",      "close_values": ["Reactivation Email"],"monthly_goal": None, "section": "inhouse"},
     {"name": "Reactivation Scrapers",   "close_values": ["Reactivation Scrapers"],"monthly_goal": None, "section": "inhouse"},
+    {"name": "LinkedIn Ads",            "close_values": ["LinkedIn Ads"],       "monthly_goal": None, "section": "inhouse"},
+    {"name": "YouTube Ads",             "close_values": ["YouTube Ads"],        "monthly_goal": None, "section": "inhouse"},
+    {"name": "Google Ads",              "close_values": ["Google Ads"],         "monthly_goal": None, "section": "inhouse"},
 ]
 
 # Build reverse lookup: close_value → funnel display name
@@ -735,7 +738,7 @@ def generate_rolling_html(data, ltf_daily=None):
     <details>
       <summary>{ltf_summary}</summary>
       <div class="card" style="margin-top:0.5rem;">
-        <table><colgroup><col style="width:170px"><col span="{n_cols}"></colgroup>
+        <table><colgroup><col style="width:200px"><col span="{n_cols}"></colgroup>
           <tbody>
             <tr><td class="metric">Closer Calls</td>{ltf_closer_r}</tr>
             <tr><td class="metric">Setter Calls</td>{ltf_setter_r}</tr>
@@ -761,7 +764,7 @@ def generate_rolling_html(data, ltf_daily=None):
 
   <div class="card">
     <div class="sec">CAPACITY METRICS</div>
-    <table><colgroup><col style="width:170px"><col span="{n_cols}"></colgroup>
+    <table><colgroup><col style="width:200px"><col span="{n_cols}"></colgroup>
       <thead><tr><th></th>{date_headers}</tr></thead>
       <tbody>
         <tr><td class="metric">Capacity</td>{cap_r}</tr>
@@ -773,7 +776,7 @@ def generate_rolling_html(data, ltf_daily=None):
   </div>
 
   <div class="card">
-    <table><colgroup><col style="width:170px"><col span="{n_cols}"></colgroup>
+    <table><colgroup><col style="width:200px"><col span="{n_cols}"></colgroup>
       <tbody>
         <tr class="section-label-row sec-ext"><td colspan="{n_cols + 1}">Funnel Breakdown — External</td></tr>
         {ext_rows}
@@ -845,7 +848,7 @@ def generate_weekly_html(data, week_start):
     <div class="s-card"><div class="s-label">Avg Utilization</div><div class="s-value {util_class(avg_util)}">{avg_util:.1f}%</div></div>
   </div>
   <div class="card"><div class="sec">DAILY BREAKDOWN</div>
-    <table><colgroup><col style="width:170px"><col span="{n_cols}"></colgroup>
+    <table><colgroup><col style="width:200px"><col span="{n_cols}"></colgroup>
     <thead><tr><th></th>{date_headers}</tr></thead>
     <tbody><tr><td class="metric">Capacity</td>{cap_r}</tr><tr><td class="metric">Booked</td>{booked_r}</tr><tr><td class="metric">Available</td>{avail_r}</tr><tr><td class="metric">Utilization %</td>{util_r}</tr></tbody></table>
   </div>
@@ -911,7 +914,7 @@ def generate_monthly_html(data, month_date):
     <div class="s-card"><div class="s-label">Avg Utilization</div><div class="s-value {util_class(avg_util)}">{avg_util:.1f}%</div></div>
   </div>
   <div class="card"><div class="sec">WEEK BY WEEK</div>
-    <table><colgroup><col style="width:170px"><col span="8"></colgroup>
+    <table><colgroup><col style="width:200px"><col span="8"></colgroup>
     <thead><tr><th>Week</th>{week_header}</tr></thead><tbody>{week_rows}</tbody></table>
   </div>
   <div class="card"><div class="sec">FUNNEL TOTALS</div>
@@ -1012,6 +1015,9 @@ FUNNEL_SHORT = {
     "Passivepreneurs":          "Passivepreneurs",
     "Reactivation Email":       "Reactivation Email",
     "Reactivation Scrapers":    "Reactivation Scrapers",
+    "LinkedIn Ads":             "LinkedIn Ads",
+    "YouTube Ads":              "YouTube Ads",
+    "Google Ads":               "Google Ads",
 }
 
 
