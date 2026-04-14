@@ -50,6 +50,7 @@ HARD_EXCLUDED_USER_IDS = {
 }
 
 FIELD_FUNNEL_NAME_DEAL = "custom.cf_xqDQE8fkPsWa0RNEve7hcaxKblCe6489XeZGRDzyPdX"
+FIELD_FIRST_SALES_CALL = "custom.cf_LFdYEQ6bsgp49YjZzefypDmdVx8iwuakWDSLPLpVrBq"
 LEAD_FIELDS = ",".join(["id", "display_name", "name", "status_id", FIELD_FUNNEL_NAME_DEAL])
 
 # Lead statuses excluded from capacity count (matches rep scorecard methodology)
@@ -316,6 +317,33 @@ def fetch_leads_for_meetings(meetings):
     return cache
 
 
+def fetch_field_leads(start_date, end_date):
+    """Fetch leads where First Sales Call Booked Date is within [start_date, end_date).
+    Uses Close API lead search with custom field date filter.
+    Returns list of lead dicts with id, display_name, status_id, funnel, and field date.
+    """
+    step_start = time.time()
+    query = (
+        f'{FIELD_FIRST_SALES_CALL} >= "{start_date.isoformat()}" '
+        f'and {FIELD_FIRST_SALES_CALL} < "{end_date.isoformat()}"'
+    )
+    fields = ",".join(["id", "display_name", "status_id", FIELD_FIRST_SALES_CALL, FIELD_FUNNEL_NAME_DEAL])
+    leads = []
+    skip = 0
+    log(f"📥 Fetching leads by First Sales Call Booked Date ({start_date} to {end_date})...")
+    while True:
+        data = close_get("lead", {"query": query, "_fields": fields, "_skip": skip, "_limit": 200})
+        batch = data.get("data", [])
+        leads.extend(batch)
+        if len(leads) % 100 == 0 and len(leads) > 0:
+            log(f"   ... {len(leads)} leads fetched")
+        if not data.get("has_more", False):
+            break
+        skip += 200
+    log(f"   ✓ {len(leads)} leads found [{elapsed_since(step_start)}]")
+    return leads
+
+
 def map_funnel(raw_funnel):
     """Map a raw Close funnel value to the display funnel name."""
     if not raw_funnel or raw_funnel.strip() == "":
@@ -329,62 +357,62 @@ def map_funnel(raw_funnel):
     return raw_funnel
 
 
-def build_dashboard_data(meetings, lead_cache, dates, today=None):
-    valid_meetings = []
-    status_excluded = 0
-    for m in meetings:
-        lead_id = m.get("lead_id")
-        lead_data = lead_cache.get(lead_id) if lead_id else None
-
-        # Exclude leads with Canceled (by Lead) or Outside the US status
-        if lead_data and lead_data.get("status_id") in EXCLUDED_LEAD_STATUS_IDS:
-            status_excluded += 1
-            continue
-
-        raw_funnel = (lead_data.get(FIELD_FUNNEL_NAME_DEAL) if lead_data else None) or ""
-        funnel = map_funnel(raw_funnel)
-        valid_meetings.append({"date": m["_meeting_date"], "title": m.get("title", ""), "funnel": funnel, "lead_id": lead_id or ""})
-
-    if status_excluded > 0:
-        log(f"   ⚠ Excluded {status_excluded} meetings (lead status: Canceled/Outside US)")
-
-    # Deduplicate by lead_id across the FULL window — most recent meeting wins.
-    # This matches the rep scorecard methodology: one lead = one count, period.
-    # Group by lead_id, keep the meeting with the latest date.
-    lead_best = {}  # lead_id → meeting dict with the latest date
-    no_lead_meetings = []  # meetings without a lead_id (keep all)
-    for m in valid_meetings:
-        lid = m["lead_id"]
-        if not lid:
-            no_lead_meetings.append(m)
-            continue
-        if lid not in lead_best or m["date"] > lead_best[lid]["date"]:
-            lead_best[lid] = m
-
-    deduped_meetings = list(lead_best.values()) + no_lead_meetings
-    dupes_removed = len(valid_meetings) - len(deduped_meetings)
-
-    if dupes_removed > 0:
-        log(f"   ⚠ Deduped {dupes_removed} meetings (cross-window lead dedup, most recent kept)")
-
+def build_dashboard_data(field_leads, dates, today=None):
+    """Build dashboard data from field-based lead query.
+    field_leads: list of lead dicts from fetch_field_leads (or similar).
+    Each lead has id, display_name, status_id, First Sales Call Booked Date, Funnel.
+    No title classification or dedup needed — the field handles both natively.
+    """
     daily_data = {}
     all_funnels_seen = set()
     for d in dates:
         daily_data[d] = {"booked": 0, "capacity": CAPACITY[d.weekday()], "funnels": {}}
-    for m in deduped_meetings:
-        d = m["date"]
-        if d not in daily_data:
+
+    valid_meetings = []
+    status_excluded = 0
+
+    for lead in field_leads:
+        # Exclude bad statuses
+        if lead.get("status_id") in EXCLUDED_LEAD_STATUS_IDS:
+            status_excluded += 1
             continue
-        daily_data[d]["booked"] += 1
-        f = m["funnel"]
-        all_funnels_seen.add(f)
-        daily_data[d]["funnels"][f] = daily_data[d]["funnels"].get(f, 0) + 1
+
+        # Get the date from the field
+        field_date_str = lead.get(FIELD_FIRST_SALES_CALL)
+        if not field_date_str:
+            continue
+        try:
+            field_date = date.fromisoformat(field_date_str)
+        except (ValueError, TypeError):
+            continue
+
+        if field_date not in daily_data:
+            continue
+
+        # Get funnel
+        raw_funnel = (lead.get(FIELD_FUNNEL_NAME_DEAL) or "")
+        funnel = map_funnel(raw_funnel)
+
+        daily_data[field_date]["booked"] += 1
+        all_funnels_seen.add(funnel)
+        daily_data[field_date]["funnels"][funnel] = daily_data[field_date]["funnels"].get(funnel, 0) + 1
+
+        valid_meetings.append({
+            "date": field_date,
+            "title": lead.get("display_name", ""),
+            "funnel": funnel,
+            "lead_id": lead.get("id", ""),
+        })
+
+    if status_excluded > 0:
+        log(f"   ⚠ Excluded {status_excluded} leads (status: Canceled/Outside US)")
+    log(f"   📊 {len(valid_meetings)} leads counted across window")
 
     return {
         "dates": dates,
         "daily_data": daily_data,
         "all_funnels_seen": all_funnels_seen,
-        "valid_meetings": deduped_meetings,
+        "valid_meetings": valid_meetings,
         "today": today,
     }
 
@@ -595,7 +623,7 @@ def build_uncategorized_rows(data, dates, today):
 
 # ─── Rolling Dashboard HTML ─────────────────────────────────────────────────
 
-def generate_rolling_html(data, exclude_other, counts, ltf_daily=None):
+def generate_rolling_html(data, ltf_daily=None):
     dates = data["dates"]
     daily = data["daily_data"]
     today = data["today"]
@@ -648,11 +676,7 @@ def generate_rolling_html(data, exclude_other, counts, ltf_daily=None):
         t = tc(d)
         total_cells += f'<td class="num total-num{t}">{daily[d]["booked"]}</td>'
 
-    # Excluded titles
-    excluded_rows = ""
-    for item in exclude_other:
-        te = item["title"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        excluded_rows += f'<tr><td class="label">{te}</td><td class="num">{item["date"]}</td></tr>\n'
+    # (Excluded titles section removed — field-based counting replaces title classification)
 
     # LTF Detail section (collapsible)
     ltf_html = ""
@@ -763,18 +787,8 @@ def generate_rolling_html(data, exclude_other, counts, ltf_daily=None):
   </div>
   {ltf_html}
 
-  <div class="excluded-section">
-    <details>
-      <summary>📋 Excluded Titles ({len(exclude_other)} meetings not classified as first calls)</summary>
-      <div class="card exc-table">
-        <table style="table-layout:auto"><thead><tr><th>Title</th><th>Date</th></tr></thead>
-        <tbody>{excluded_rows if excluded_rows else '<tr><td class="label" colspan="2">None</td></tr>'}</tbody></table>
-      </div>
-    </details>
-  </div>
-
   <div class="footer">
-    <span>Classification: {counts['include']} included · {counts['exclude']} excluded · {counts['status_excluded']} canceled/declined · {counts['exclude_other']} unclassified · <a href="archive.html">📁 Archive</a></span>
+    <span>Source: First Sales Call Booked Date field · {len(data['valid_meetings'])} leads in window · <a href="archive.html">📁 Archive</a></span>
     <a href="https://stephenolivas.github.io/mtd-funnel-reporting/" target="_blank">📊 MTD Funnel Reporting →</a>
   </div>
 </div></body></html>"""
@@ -1310,34 +1324,32 @@ def main():
 
     all_meetings = fetch_all_meetings()
 
-    # ── Rolling dashboard ──
+    # ── Rolling dashboard (field-based) ──
     log("\n═══ Rolling Dashboard ═══")
     rolling_start = today - timedelta(days=3)
     rolling_end = today + timedelta(days=10)
     rolling_dates = [rolling_start + timedelta(days=i) for i in range(13)]
-    included, exclude_other, counts = classify_meetings(all_meetings, rolling_start, rolling_end)
-    log(f"   INCLUDE: {counts['include']} | EXCLUDE: {counts['exclude']} | STATUS_EXCLUDED: {counts['status_excluded']} | OTHER: {counts['exclude_other']}")
-    lead_cache = fetch_leads_for_meetings(included)
-    rolling_data = build_dashboard_data(included, lead_cache, rolling_dates, today=today)
+    field_leads = fetch_field_leads(rolling_start, rolling_end)
+    rolling_data = build_dashboard_data(field_leads, rolling_dates, today=today)
 
-    # ── LTF Detail (setter calls from Kristin/Spencer) ──
+    # ── LTF Detail (setter calls from Kristin/Spencer — still meeting-based) ──
     log("\n═══ LTF Detail ═══")
     setter_meetings = classify_setter_meetings(all_meetings, rolling_start, rolling_end)
     log(f"   Setter meetings in window: {len(setter_meetings)}")
-    # Fetch leads for setter meetings not already cached
-    setter_new_ids = set(m["lead_id"] for m in setter_meetings if m.get("lead_id")) - set(lead_cache.keys())
-    if setter_new_ids:
-        log(f"   Fetching {len(setter_new_ids)} additional leads for setter data...")
-        for lid in setter_new_ids:
+    setter_lead_cache = {}
+    setter_lead_ids = list(set(m["lead_id"] for m in setter_meetings if m.get("lead_id")))
+    if setter_lead_ids:
+        log(f"   Fetching {len(setter_lead_ids)} leads for setter data...")
+        for lid in setter_lead_ids:
             try:
-                lead_cache[lid] = close_get(f"lead/{lid}", {"_fields": LEAD_FIELDS})
+                setter_lead_cache[lid] = close_get(f"lead/{lid}", {"_fields": LEAD_FIELDS})
             except requests.HTTPError:
-                lead_cache[lid] = None
-    ltf_daily = build_ltf_detail(rolling_data, setter_meetings, lead_cache, rolling_dates)
+                setter_lead_cache[lid] = None
+    ltf_daily = build_ltf_detail(rolling_data, setter_meetings, setter_lead_cache, rolling_dates)
 
-    html = generate_rolling_html(rolling_data, exclude_other, counts, ltf_daily=ltf_daily)
+    html = generate_rolling_html(rolling_data, ltf_daily=ltf_daily)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f: f.write(html)
-    log(f"✅ {OUTPUT_FILE} written ({len(rolling_data['valid_meetings'])} meetings)")
+    log(f"✅ {OUTPUT_FILE} written ({len(rolling_data['valid_meetings'])} leads)")
 
     # ── Daily snapshot ──
     log("\n═══ Daily Snapshot ═══")
@@ -1350,16 +1362,12 @@ def main():
         log("\n═══ Weekly Summary ═══")
         pm = today - timedelta(days=7); ps = today - timedelta(days=1)
         wd = [pm + timedelta(days=i) for i in range(7)]
-        wi, _, _ = classify_meetings(all_meetings, pm, ps + timedelta(days=1))
-        new_ids = set(m["lead_id"] for m in wi if m.get("lead_id")) - set(lead_cache.keys())
-        for lid in new_ids:
-            try: lead_cache[lid] = close_get(f"lead/{lid}", {"_fields": LEAD_FIELDS})
-            except: lead_cache[lid] = None
-        wdata = build_dashboard_data(wi, lead_cache, wd)
+        w_leads = fetch_field_leads(pm, ps + timedelta(days=1))
+        wdata = build_dashboard_data(w_leads, wd)
         wh = generate_weekly_html(wdata, pm)
         wp = f"{ARCHIVE_DIR}/week-{pm.isoformat()}.html"
         with open(wp, "w", encoding="utf-8") as f: f.write(wh)
-        log(f"✅ {wp} saved ({len(wdata['valid_meetings'])} meetings)")
+        log(f"✅ {wp} saved ({len(wdata['valid_meetings'])} leads)")
     else:
         log(f"\n⏭ Weekly: skipped ({today.strftime('%A')})")
 
@@ -1368,16 +1376,12 @@ def main():
         log("\n═══ Monthly Summary ═══")
         pme = today - timedelta(days=1); pms = pme.replace(day=1)
         nd = (pme - pms).days + 1; md = [pms + timedelta(days=i) for i in range(nd)]
-        mi, _, _ = classify_meetings(all_meetings, pms, today)
-        new_ids = set(m["lead_id"] for m in mi if m.get("lead_id")) - set(lead_cache.keys())
-        for lid in new_ids:
-            try: lead_cache[lid] = close_get(f"lead/{lid}", {"_fields": LEAD_FIELDS})
-            except: lead_cache[lid] = None
-        mdata = build_dashboard_data(mi, lead_cache, md)
+        m_leads = fetch_field_leads(pms, today)
+        mdata = build_dashboard_data(m_leads, md)
         mh = generate_monthly_html(mdata, pms)
         mp = f"{ARCHIVE_DIR}/month-{pms.strftime('%Y-%m')}.html"
         with open(mp, "w", encoding="utf-8") as f: f.write(mh)
-        log(f"✅ {mp} saved ({len(mdata['valid_meetings'])} meetings)")
+        log(f"✅ {mp} saved ({len(mdata['valid_meetings'])} leads)")
     else:
         log(f"\n⏭ Monthly: skipped (day {today.day})")
 
