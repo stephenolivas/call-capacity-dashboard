@@ -739,7 +739,7 @@ def generate_rolling_html(data, ltf_daily=None, ig_daily=None):
 <title>Call Capacity Dashboard</title>
 <style>{COMMON_CSS}</style>
 </head><body>
-{html_header_bar("Call Capacity Dashboard", f"3-Day Trailing + 10-Day Lookahead · First Meetings Only · {wd} working days in {now_pacific.strftime('%B')}", last_updated_date, "Last updated: " + last_updated)}
+{html_header_bar("Call Capacity Dashboard", f"4-Day Trailing + 10-Day Lookahead · First Meetings Only · {wd} working days in {now_pacific.strftime('%B')}", last_updated_date, "Last updated: " + last_updated)}
 <div class="wrap">
 
   <div class="card">
@@ -1313,9 +1313,9 @@ def main():
 
     # ── Rolling dashboard (field-based) ──
     log("\n═══ Rolling Dashboard ═══")
-    rolling_start = today - timedelta(days=3)
+    rolling_start = today - timedelta(days=4)
     rolling_end = today + timedelta(days=10)
-    rolling_dates = [rolling_start + timedelta(days=i) for i in range(13)]
+    rolling_dates = [rolling_start + timedelta(days=i) for i in range(14)]
     field_leads = fetch_field_leads(rolling_start, rolling_end)
     rolling_data = build_dashboard_data(field_leads, rolling_dates, today=today)
 
