@@ -628,7 +628,7 @@ def build_uncategorized_rows(data, dates, today):
 
 # ─── Rolling Dashboard HTML ─────────────────────────────────────────────────
 
-def generate_rolling_html(data, ltf_daily=None, ig_daily=None):
+def generate_rolling_html(data, ltf_daily=None, agency_details=None):
     dates = data["dates"]
     daily = data["daily_data"]
     today = data["today"]
@@ -736,7 +736,76 @@ def generate_rolling_html(data, ltf_daily=None, ig_daily=None):
   </div>"""
 
     ltf_html = build_detail_html(ltf_daily, "LTF", show_no_funnel=True)
-    ig_html = build_detail_html(ig_daily, "IG/X/LinkedIn", show_no_funnel=False)
+
+    # ── Agency detail (IG/X/LinkedIn — each funnel gets its own closer/setter rows) ──
+    agency_html = ""
+    if agency_details:
+        funnel_rows = ""
+        grand_total_r = ""
+        grand_pct_r = ""
+        g_closer = g_setter = 0
+        # Pre-compute per-day grand totals for the combined total row
+        day_totals = {d: 0 for d in dates}
+
+        for fi, (funnel_label, detail_daily) in enumerate(agency_details):
+            if not detail_daily:
+                continue
+            closer_r = setter_r = ""
+            for d in dates:
+                t = tc(d)
+                dd = detail_daily.get(d, {"closer": 0, "setter": 0, "total": 0, "no_funnel": 0})
+                c, s = dd["closer"], dd["setter"]
+                g_closer += c; g_setter += s
+                day_totals[d] += c + s
+                closer_r += f'<td class="num ltf-closer{t}">{c}</td>' if c > 0 else f'<td class="num zero{t}">0</td>'
+                setter_r += f'<td class="num ltf-setter{t}">{s}</td>' if s > 0 else f'<td class="num zero{t}">0</td>'
+
+            sep = ' style="border-top:2px solid #e0e0e0;"' if fi > 0 else ""
+            funnel_rows += f'<tr{sep}><td class="metric">{funnel_label} Closer</td>{closer_r}</tr>\n'
+            funnel_rows += f'<tr><td class="metric">{funnel_label} Setter</td>{setter_r}</tr>\n'
+
+        # Grand total row
+        for d in dates:
+            t = tc(d)
+            tot = day_totals[d]
+            grand_total_r += f'<td class="num ltf-total{t}">{tot}</td>' if tot > 0 else f'<td class="num zero{t}">0</td>'
+            if tot > 0:
+                cp = round(day_totals[d] / tot * 100) if tot > 0 else 0
+                # Need closer vs setter per day for pct
+            grand_pct_r += f'<td class="num zero{t}">–</td>'
+
+        # Recalculate per-day closer/setter for percentage row
+        grand_pct_r = ""
+        for d in dates:
+            t = tc(d)
+            dc = sum(detail_daily.get(d, {"closer": 0})["closer"] for _, detail_daily in agency_details if detail_daily)
+            ds = sum(detail_daily.get(d, {"setter": 0})["setter"] for _, detail_daily in agency_details if detail_daily)
+            dtot = dc + ds
+            if dtot > 0:
+                cp = round(dc / dtot * 100); sp = 100 - cp
+                grand_pct_r += f'<td class="num ltf-pct{t}">{cp}% / {sp}%</td>'
+            else:
+                grand_pct_r += f'<td class="num zero{t}">–</td>'
+
+        g_total = g_closer + g_setter
+        pct_str = f" · {round(g_closer / g_total * 100)}% / {100 - round(g_closer / g_total * 100)}%" if g_total > 0 else ""
+        summary = f"IG/X/LinkedIn Detail — Closer: {g_closer} · Setter: {g_setter}{pct_str}"
+
+        agency_html = f"""
+  <div class="ltf-collapsible">
+    <details>
+      <summary>{summary}</summary>
+      <div class="card" style="margin-top:0.5rem;">
+        <table><colgroup><col style="width:200px"><col span="{n_cols}"></colgroup>
+          <tbody>
+            {funnel_rows}
+            <tr class="total-row"><td class="metric">Combined Total</td>{grand_total_r}</tr>
+            <tr><td class="metric">Closer % / Setter %</td>{grand_pct_r}</tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+  </div>"""
 
     wd = working_days_in_month(year, month)
 
@@ -776,7 +845,7 @@ def generate_rolling_html(data, ltf_daily=None, ig_daily=None):
     </table>
   </div>
   {ltf_html}
-  {ig_html}
+  {agency_html}
 
   <div class="footer">
     <span>Source: First Sales Call Booked Date field · {len(data['valid_meetings'])} leads in window · <a href="archive.html">📁 Archive</a></span>
@@ -1340,9 +1409,17 @@ def main():
             except requests.HTTPError:
                 setter_lead_cache[lid] = None
     ltf_daily = build_funnel_detail(rolling_data, setter_meetings, setter_lead_cache, rolling_dates, "Low Ticket Funnel", "LTF", track_no_funnel=True)
-    ig_daily = build_funnel_detail(rolling_data, setter_meetings, setter_lead_cache, rolling_dates, ["Instagram", "X", "Linkedin"], "Instagram/X/LinkedIn")
+    ig_daily = build_funnel_detail(rolling_data, setter_meetings, setter_lead_cache, rolling_dates, "Instagram", "Instagram")
+    x_daily = build_funnel_detail(rolling_data, setter_meetings, setter_lead_cache, rolling_dates, "X", "X")
+    li_daily = build_funnel_detail(rolling_data, setter_meetings, setter_lead_cache, rolling_dates, "Linkedin", "LinkedIn")
 
-    html = generate_rolling_html(rolling_data, ltf_daily=ltf_daily, ig_daily=ig_daily)
+    agency_details = [
+        ("Instagram", ig_daily),
+        ("X", x_daily),
+        ("LinkedIn", li_daily),
+    ]
+
+    html = generate_rolling_html(rolling_data, ltf_daily=ltf_daily, agency_details=agency_details)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f: f.write(html)
     log(f"✅ {OUTPUT_FILE} written ({len(rolling_data['valid_meetings'])} leads)")
 
