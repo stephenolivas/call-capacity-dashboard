@@ -420,16 +420,23 @@ def build_dashboard_data(field_leads, dates, today=None):
     }
 
 
-def build_funnel_detail(closer_data, setter_meetings, lead_cache, dates, close_value, label, track_no_funnel=False):
+def build_funnel_detail(closer_data, setter_meetings, lead_cache, dates, close_values, label, track_no_funnel=False):
     """
-    Build closer vs setter breakdown per day for a specific funnel.
-    close_value: the Close field value to match (e.g., "Low Ticket Funnel", "Instagram")
+    Build closer vs setter breakdown per day for one or more funnels.
+    close_values: a single Close field value OR a list of values
+                  (e.g., "Low Ticket Funnel" or ["Instagram", "X", "Linkedin"])
     label: display label for logging (e.g., "LTF", "Instagram")
     track_no_funnel: if True, also count setter calls with no funnel assigned
     """
+    if isinstance(close_values, str):
+        close_values = [close_values]
+
     daily = {}
     for d in dates:
-        closer_count = closer_data["daily_data"][d]["funnels"].get(map_funnel(close_value), 0)
+        closer_count = sum(
+            closer_data["daily_data"][d]["funnels"].get(map_funnel(cv), 0)
+            for cv in close_values
+        )
         daily[d] = {"closer": closer_count, "setter": 0, "total": closer_count, "no_funnel": 0}
 
     # Cross-window dedup for setter meetings — most recent wins
@@ -458,7 +465,7 @@ def build_funnel_detail(closer_data, setter_meetings, lead_cache, dates, close_v
         if not raw_funnel and track_no_funnel:
             daily[meeting_date]["no_funnel"] += 1
             no_funnel_total += 1
-        elif raw_funnel == close_value:
+        elif raw_funnel in close_values:
             daily[meeting_date]["setter"] += 1
             daily[meeting_date]["total"] += 1
             setter_count_total += 1
@@ -729,7 +736,7 @@ def generate_rolling_html(data, ltf_daily=None, ig_daily=None):
   </div>"""
 
     ltf_html = build_detail_html(ltf_daily, "LTF", show_no_funnel=True)
-    ig_html = build_detail_html(ig_daily, "Instagram", show_no_funnel=False)
+    ig_html = build_detail_html(ig_daily, "IG/X/LinkedIn", show_no_funnel=False)
 
     wd = working_days_in_month(year, month)
 
@@ -1333,7 +1340,7 @@ def main():
             except requests.HTTPError:
                 setter_lead_cache[lid] = None
     ltf_daily = build_funnel_detail(rolling_data, setter_meetings, setter_lead_cache, rolling_dates, "Low Ticket Funnel", "LTF", track_no_funnel=True)
-    ig_daily = build_funnel_detail(rolling_data, setter_meetings, setter_lead_cache, rolling_dates, "Instagram", "Instagram")
+    ig_daily = build_funnel_detail(rolling_data, setter_meetings, setter_lead_cache, rolling_dates, ["Instagram", "X", "Linkedin"], "Instagram/X/LinkedIn")
 
     html = generate_rolling_html(rolling_data, ltf_daily=ltf_daily, ig_daily=ig_daily)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f: f.write(html)
