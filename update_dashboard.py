@@ -71,6 +71,7 @@ API_THROTTLE = 0.5
 FUNNEL_CONFIG = [
     # ── External ──
     {"name": "Low Ticket Funnel",       "close_values": ["Low Ticket Funnel"], "monthly_goal": 400, "section": "external"},
+    {"name": "LTF - Quiz Funnel",       "close_values": ["LTF - Quiz Funnel"], "monthly_goal": None, "section": "external"},
     {"name": "Instagram",               "close_values": ["Instagram"],         "monthly_goal": 240, "section": "external"},
     {"name": "YouTube",                 "close_values": ["YouTube - OG - Cam"],"monthly_goal": 132, "section": "inhouse"},
     {"name": "X",                       "close_values": ["X"],                 "monthly_goal": 30,  "section": "external"},
@@ -1057,6 +1058,7 @@ CF_ICP             = "cf_OcYP2vXsG2tvbMDubwQNcidiqVegXa7CsyWkOR3f7KN"
 
 FUNNEL_SHORT = {
     "Low Ticket Funnel":        "LTF",
+    "LTF - Quiz Funnel":        "LTF Quiz",
     "Instagram":                "IG",
     "YouTube":                  "YT",
     "X":                        "X",
