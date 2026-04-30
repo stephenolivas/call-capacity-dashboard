@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Call Capacity Dashboard Generator (v13)
+Call Capacity Dashboard - Lane 1 Reps Generator (v13)
 
 New:
 - Funnel sections: External / In-House / Uncategorized
 - Monthly goals per funnel, divided by working days
 - All funnels always displayed (even with 0 counts)
-- Combined "AK TikTok/Instagram" row (Tik Tok + Anthony IG)
+- "AK TikTok" and "Anthony IG" rows (Tik Tok + Anthony IG in Close)
 - Count/Goal format (e.g. 7/10) or count-only for funnels without goals
 - Archive system: daily snapshots + weekly summaries + monthly summaries
 """
@@ -28,7 +28,15 @@ CLOSE_API_KEY = os.environ.get("CLOSE_API_KEY", "")
 CLOSE_API_BASE = "https://api.close.com/api/v1"
 PACIFIC = ZoneInfo("America/Los_Angeles")
 
-CAPACITY = {0: 57, 1: 60, 2: 60, 3: 60, 4: 60, 5: 4, 6: 0}
+CAPACITY_OLD = {0: 57, 1: 60, 2: 60, 3: 60, 4: 60, 5: 4, 6: 0}
+CAPACITY_NEW = {0: 42, 1: 42, 2: 42, 3: 42, 4: 42, 5: 0, 6: 0}
+CAPACITY_CUTOVER = date(2026, 5, 1)  # New capacity starts on this date
+
+def get_capacity(d):
+    """Return capacity for a given date, respecting the cutover."""
+    if d >= CAPACITY_CUTOVER:
+        return CAPACITY_NEW[d.weekday()]
+    return CAPACITY_OLD[d.weekday()]
 
 EXCLUDED_USER_IDS = {
     "user_EmhqCmaHERTfgfWnPADiLGEqQw3ENvRYd3u1VEmblIp",
@@ -66,7 +74,7 @@ API_THROTTLE = 0.5
 # ─── Funnel Configuration ───────────────────────────────────────────────────
 # Each entry: display_name, close_values (list), monthly_goal (None = no goal), section
 # close_values is a list of Close field values that map to this funnel row
-# "AK TikTok/Instagram" combines two Close values into one row
+# "AK TikTok" and "Anthony IG" are separate rows (Tik Tok + Anthony IG in Close)
 
 FUNNEL_CONFIG = [
     # ── External ──
@@ -83,8 +91,8 @@ FUNNEL_CONFIG = [
     {"name": "Website",                 "close_values": ["Website"],           "monthly_goal": 100, "section": "inhouse"},
     {"name": "Internal Webinar",        "close_values": ["Internal Webinar"],  "monthly_goal": 70,  "section": "inhouse"},
     {"name": "Mike Newsletter",           "close_values": ["Mike Newsletter"],   "monthly_goal": 10,  "section": "inhouse"},
-    {"name": "AK TikTok",                "close_values": ["Tik Tok"],           "monthly_goal": None, "section": "inhouse"},
-    {"name": "Anthony IG",               "close_values": ["Anthony IG"],        "monthly_goal": None, "section": "inhouse"},
+    {"name": "AK TikTok",                "close_values": ["Tik Tok"],           "monthly_goal": 22, "section": "inhouse"},
+    {"name": "Anthony IG",               "close_values": ["Anthony IG"],        "monthly_goal": 22, "section": "inhouse"},
     {"name": "Side Hustle Nation/WWWS", "close_values": ["WWWS"],              "monthly_goal": 2,   "section": "inhouse"},
     {"name": "Passivepreneurs",         "close_values": ["Passivepreneurs"],   "monthly_goal": None, "section": "inhouse"},
     {"name": "Reactivation Email",      "close_values": ["Reactivation Email"],"monthly_goal": None, "section": "inhouse"},
@@ -371,7 +379,7 @@ def build_dashboard_data(field_leads, dates, today=None):
     daily_data = {}
     all_funnels_seen = set()
     for d in dates:
-        daily_data[d] = {"booked": 0, "capacity": CAPACITY[d.weekday()], "funnels": {}}
+        daily_data[d] = {"booked": 0, "capacity": get_capacity(d), "funnels": {}}
 
     valid_meetings = []
     status_excluded = 0
@@ -814,10 +822,10 @@ def generate_rolling_html(data, ltf_daily=None, agency_details=None):
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Call Capacity Dashboard</title>
+<title>Call Capacity Dashboard - Lane 1 Reps</title>
 <style>{COMMON_CSS}</style>
 </head><body>
-{html_header_bar("Call Capacity Dashboard", f"4-Day Trailing + 10-Day Lookahead · First Meetings Only · {wd} working days in {now_pacific.strftime('%B')}", last_updated_date, "Last updated: " + last_updated)}
+{html_header_bar("Call Capacity Dashboard - Lane 1 Reps", f"4-Day Trailing + 10-Day Lookahead · First Meetings Only · {wd} working days in {now_pacific.strftime('%B')}", last_updated_date, "Last updated: " + last_updated)}
 <div class="wrap">
 
   <div class="card">
@@ -1018,8 +1026,8 @@ def generate_archive_html(archive_dir):
         return rows
 
     now_pacific = datetime.now(PACIFIC)
-    return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Call Capacity Dashboard — Archive</title><style>{COMMON_CSS} a:hover {{ text-decoration: underline !important; }}</style></head><body>
-{html_header_bar("Call Capacity Dashboard — Archive", "Historical snapshots and summaries", now_pacific.strftime("%A, %B %-d, %Y"), "Updated: " + now_pacific.strftime("%I:%M %p %Z"))}
+    return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Call Capacity Dashboard - Lane 1 Reps — Archive</title><style>{COMMON_CSS} a:hover {{ text-decoration: underline !important; }}</style></head><body>
+{html_header_bar("Call Capacity Dashboard - Lane 1 Reps — Archive", "Historical snapshots and summaries", now_pacific.strftime("%A, %B %-d, %Y"), "Updated: " + now_pacific.strftime("%I:%M %p %Z"))}
 <div class="wrap">
   <div style="margin-bottom:1rem;"><a href="index.html" style="color:#1b7a2e; font-weight:600; text-decoration:none; font-size:0.85rem;">← Back to Live Dashboard</a></div>
   <div class="card"><div class="sec">📈 MONTHLY SUMMARIES</div><table style="table-layout:auto"><tbody>{make_links(monthly_files)}</tbody></table></div>
@@ -1281,7 +1289,7 @@ def format_eod_email(data):
 
         <!-- Header -->
         <tr><td style="background:#1b2e1b;border-radius:8px 8px 0 0;padding:24px 28px;">
-          <p style="margin:0;color:#a3c4a3;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">Call Capacity Dashboard</p>
+          <p style="margin:0;color:#a3c4a3;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">Call Capacity Dashboard - Lane 1 Reps</p>
           <h1 style="margin:6px 0 0;color:#ffffff;font-size:22px;font-weight:700;">EOD Stats — {date_str}</h1>
           <p style="margin:4px 0 0;color:#a3c4a3;font-size:12px;">{day_full}</p>
         </td></tr>
@@ -1312,7 +1320,7 @@ def format_eod_email(data):
 
         <!-- Footer -->
         <tr><td style="padding:16px 0 0;text-align:center;">
-          <p style="margin:0;color:#aaa;font-size:11px;">Auto-generated by Call Capacity Dashboard · <a href="https://stephenolivas.github.io/call-capacity-dashboard/index.html" style="color:#1b7a2e;text-decoration:none;">View Dashboard →</a></p>
+          <p style="margin:0;color:#aaa;font-size:11px;">Auto-generated by Call Capacity Dashboard - Lane 1 Reps · <a href="https://stephenolivas.github.io/call-capacity-dashboard/index.html" style="color:#1b7a2e;text-decoration:none;">View Dashboard →</a></p>
         </td></tr>
 
       </table>
@@ -1377,7 +1385,7 @@ def main():
         log("❌ Error: CLOSE_API_KEY environment variable is not set."); sys.exit(1)
 
     _api_call_count = 0; start_time = time.time()
-    log("🚀 Starting Call Capacity Dashboard update (v13 — funnel goals + sections)...")
+    log("🚀 Starting Call Capacity Dashboard - Lane 1 Reps update (v13 — funnel goals + sections)...")
 
     # Capture time NOW before the ~5 min API calls, so hour checks at the end
     # reflect when this run *started*, not when it finished.
