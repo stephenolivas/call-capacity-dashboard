@@ -59,7 +59,20 @@ HARD_EXCLUDED_USER_IDS = {
 
 FIELD_FUNNEL_NAME_DEAL = "custom.cf_xqDQE8fkPsWa0RNEve7hcaxKblCe6489XeZGRDzyPdX"
 FIELD_FIRST_SALES_CALL = "custom.cf_LFdYEQ6bsgp49YjZzefypDmdVx8iwuakWDSLPLpVrBq"
+FIELD_LEAD_OWNER       = "custom.cf_gOfS9pFwext58oberEegLyix8hZzeHrxhCZOVh3P3rd"
 LEAD_FIELDS = ",".join(["id", "display_name", "name", "status_id", FIELD_FUNNEL_NAME_DEAL])
+
+# Lane 1 reps — only leads owned by these reps appear on this dashboard.
+# Jason Aaron is temporarily in both lanes during the re-org transition.
+LANE_1_REPS = {
+    "Robin Perkins",
+    "Eric Piccione",
+    "Jason Aaron",
+    "Scott Seymour",
+    "Chris Wanke",
+    "Jake Skinner",
+    "Christian Hartwell",
+}
 
 # Lead statuses excluded from capacity count (matches rep scorecard methodology)
 EXCLUDED_LEAD_STATUS_IDS = {
@@ -340,7 +353,7 @@ def fetch_field_leads(start_date, end_date):
         f'{FIELD_FIRST_SALES_CALL} >= "{start_date.isoformat()}" '
         f'and {FIELD_FIRST_SALES_CALL} < "{end_date.isoformat()}"'
     )
-    fields = ",".join(["id", "display_name", "status_id", FIELD_FIRST_SALES_CALL, FIELD_FUNNEL_NAME_DEAL])
+    fields = ",".join(["id", "display_name", "status_id", FIELD_FIRST_SALES_CALL, FIELD_FUNNEL_NAME_DEAL, FIELD_LEAD_OWNER])
     leads = []
     skip = 0
     log(f"📥 Fetching leads by First Sales Call Booked Date ({start_date} to {end_date})...")
@@ -383,11 +396,18 @@ def build_dashboard_data(field_leads, dates, today=None):
 
     valid_meetings = []
     status_excluded = 0
+    lane_excluded = 0
 
     for lead in field_leads:
         # Exclude bad statuses
         if lead.get("status_id") in EXCLUDED_LEAD_STATUS_IDS:
             status_excluded += 1
+            continue
+
+        # Lane 1 filter — only count leads owned by Lane 1 reps
+        lead_owner = (lead.get(FIELD_LEAD_OWNER) or "").strip()
+        if lead_owner not in LANE_1_REPS:
+            lane_excluded += 1
             continue
 
         # Get the date from the field
@@ -419,7 +439,9 @@ def build_dashboard_data(field_leads, dates, today=None):
 
     if status_excluded > 0:
         log(f"   ⚠ Excluded {status_excluded} leads (status: Canceled/Outside US)")
-    log(f"   📊 {len(valid_meetings)} leads counted across window")
+    if lane_excluded > 0:
+        log(f"   ⚠ Excluded {lane_excluded} leads (Lead Owner not in Lane 1)")
+    log(f"   📊 {len(valid_meetings)} Lane 1 leads counted across window")
 
     return {
         "dates": dates,
@@ -858,7 +880,7 @@ def generate_rolling_html(data, ltf_daily=None, agency_details=None):
   {agency_html}
 
   <div class="footer">
-    <span>Source: First Sales Call Booked Date field · {len(data['valid_meetings'])} leads in window · <a href="archive.html">📁 Archive</a></span>
+    <span>Source: First Sales Call Booked Date field · Lane 1 reps only · {len(data['valid_meetings'])} leads in window · <a href="archive.html">📁 Archive</a></span>
     <a href="https://stephenolivas.github.io/mtd-funnel-dashboard/" target="_blank">📊 MTD Funnel Reporting →</a>
   </div>
 </div></body></html>"""
