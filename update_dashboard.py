@@ -74,6 +74,26 @@ LANE_1_REPS = {
     "user_wHm1vcLde4RExd3vv9UOjnms5Oz8ssXg8600mQuxMPb",  # Christian Hartwell
 }
 
+LANE_1_REP_NAMES = {
+    "user_7F059xEinVentOEvkRMP77fWZyvwUiTRTUOuhD11J0e": "Robin Perkins",
+    "user_wF5aATmDljO6g6AHqehRPVmfCmH5j9VszbO6Q6Pjzm4": "Eric Piccione",
+    "user_MrBLkl5wCqTm7QxHxPo2ydNV5KxMllg6YZDVc12Aqzj": "Jason Aaron",
+    "user_F0VeLnOQlWpkDncNW8rBl1V2QJ08fnDt6DcUjNATUJK": "Scott Seymour",
+    "user_pKEujUcHJfsEyI5lM6L56aXM2s5nNOU994JRjRSlAdA": "Chris Wanke",
+    "user_fYWHvOuCKDuaQxSp6lROlv2rmvZZYq1kzjGvaF7OrAL": "Jake Skinner",
+    "user_wHm1vcLde4RExd3vv9UOjnms5Oz8ssXg8600mQuxMPb": "Christian Hartwell",
+}
+
+LANE_1_REP_NAMES = {
+    "user_7F059xEinVentOEvkRMP77fWZyvwUiTRTUOuhD11J0e": "Robin Perkins",
+    "user_wF5aATmDljO6g6AHqehRPVmfCmH5j9VszbO6Q6Pjzm4": "Eric Piccione",
+    "user_MrBLkl5wCqTm7QxHxPo2ydNV5KxMllg6YZDVc12Aqzj": "Jason Aaron",
+    "user_F0VeLnOQlWpkDncNW8rBl1V2QJ08fnDt6DcUjNATUJK": "Scott Seymour",
+    "user_pKEujUcHJfsEyI5lM6L56aXM2s5nNOU994JRjRSlAdA": "Chris Wanke",
+    "user_fYWHvOuCKDuaQxSp6lROlv2rmvZZYq1kzjGvaF7OrAL": "Jake Skinner",
+    "user_wHm1vcLde4RExd3vv9UOjnms5Oz8ssXg8600mQuxMPb": "Christian Hartwell",
+}
+
 # Lead statuses excluded from capacity count (matches rep scorecard methodology)
 EXCLUDED_LEAD_STATUS_IDS = {
     "stat_hWIGHjzyNpl4YjIFSFz3VK4fp2ny10SFJLKAihmo4KT",  # Canceled (by Lead)
@@ -386,13 +406,18 @@ def map_funnel(raw_funnel):
 def build_dashboard_data(field_leads, dates, today=None):
     """Build dashboard data from field-based lead query.
     field_leads: list of lead dicts from fetch_field_leads (or similar).
-    Each lead has id, display_name, status_id, First Sales Call Booked Date, Funnel.
+    Each lead has id, display_name, status_id, First Sales Call Booked Date, Funnel, Lead Owner.
     No title classification or dedup needed — the field handles both natively.
     """
     daily_data = {}
     all_funnels_seen = set()
     for d in dates:
         daily_data[d] = {"booked": 0, "capacity": get_capacity(d), "funnels": {}}
+
+    # Per-rep tracking: { user_id: { date: { funnel: count } } }
+    rep_data = {}
+    for uid in LANE_1_REPS:
+        rep_data[uid] = {d: {} for d in dates}
 
     valid_meetings = []
     status_excluded = 0
@@ -430,11 +455,15 @@ def build_dashboard_data(field_leads, dates, today=None):
         all_funnels_seen.add(funnel)
         daily_data[field_date]["funnels"][funnel] = daily_data[field_date]["funnels"].get(funnel, 0) + 1
 
+        # Track per-rep
+        rep_data[lead_owner][field_date][funnel] = rep_data[lead_owner][field_date].get(funnel, 0) + 1
+
         valid_meetings.append({
             "date": field_date,
             "title": lead.get("display_name", ""),
             "funnel": funnel,
             "lead_id": lead.get("id", ""),
+            "lead_owner": lead_owner,
         })
 
     if status_excluded > 0:
@@ -449,6 +478,7 @@ def build_dashboard_data(field_leads, dates, today=None):
         "all_funnels_seen": all_funnels_seen,
         "valid_meetings": valid_meetings,
         "today": today,
+        "rep_data": rep_data,
     }
 
 
@@ -660,7 +690,7 @@ def build_uncategorized_rows(data, dates, today):
 
 # ─── Rolling Dashboard HTML ─────────────────────────────────────────────────
 
-def generate_rolling_html(data, ltf_daily=None, agency_details=None):
+def generate_rolling_html(data):
     dates = data["dates"]
     daily = data["daily_data"]
     today = data["today"]
@@ -715,124 +745,55 @@ def generate_rolling_html(data, ltf_daily=None, agency_details=None):
 
     # (Excluded titles section removed — field-based counting replaces title classification)
 
-    # ── Funnel detail helper (generates collapsible closer/setter section) ──
-    def build_detail_html(detail_daily, label, show_no_funnel=False):
-        if not detail_daily:
-            return ""
-        closer_r = setter_r = total_r = pct_r = nofunnel_r = ""
-        w_closer = w_setter = w_nofunnel = 0
+    # ── Rep Details (per-rep funnel breakdown) ──
+    rep_data = data.get("rep_data", {})
+    rep_rows = ""
+    rep_summary_parts = []
+
+    for uid in LANE_1_REPS:
+        rep_name = LANE_1_REP_NAMES.get(uid, uid)
+        day_data = rep_data.get(uid, {})
+
+        # Collect all funnels this rep has across the window
+        rep_funnels = set()
+        rep_total = 0
+        for d in dates:
+            for f, c in day_data.get(d, {}).items():
+                rep_funnels.add(f)
+                rep_total += c
+
+        if rep_total > 0:
+            rep_summary_parts.append(f"{rep_name.split()[0]}: {rep_total}")
+
+        # Rep header row (name + daily totals)
+        header_cells = ""
         for d in dates:
             t = tc(d)
-            dd = detail_daily.get(d, {"closer": 0, "setter": 0, "total": 0, "no_funnel": 0})
-            c, s, tot, nf = dd["closer"], dd["setter"], dd["total"], dd["no_funnel"]
-            w_closer += c; w_setter += s; w_nofunnel += nf
+            day_total = sum(day_data.get(d, {}).values())
+            header_cells += f'<td class="num ltf-total{t}">{day_total}</td>' if day_total > 0 else f'<td class="num zero{t}">0</td>'
 
-            closer_r  += f'<td class="num ltf-closer{t}">{c}</td>'  if c > 0 else f'<td class="num zero{t}">0</td>'
-            setter_r  += f'<td class="num ltf-setter{t}">{s}</td>'  if s > 0 else f'<td class="num zero{t}">0</td>'
-            total_r   += f'<td class="num ltf-total{t}">{tot}</td>' if tot > 0 else f'<td class="num zero{t}">0</td>'
+        sep = ' style="border-top:2px solid #e0e0e0;"' if rep_rows else ""
+        rep_rows += f'<tr{sep}><td class="metric" style="font-weight:700;padding-top:0.5rem;">{rep_name}</td>{header_cells}</tr>\n'
 
-            if tot > 0:
-                cp = round(c / tot * 100); sp = 100 - cp
-                pct_r += f'<td class="num ltf-pct{t}">{cp}% / {sp}%</td>'
-            else:
-                pct_r += f'<td class="num zero{t}">–</td>'
-
-            if show_no_funnel:
-                nofunnel_r += f'<td class="num{t}" style="color:#b45309;font-weight:600;">{nf}</td>' if nf > 0 else f'<td class="num zero{t}">0</td>'
-
-        w_total = w_closer + w_setter
-        pct_str = f" · {round(w_closer / w_total * 100)}% / {100 - round(w_closer / w_total * 100)}%" if w_total > 0 else ""
-        nf_str = f" · No Funnel: {w_nofunnel}" if show_no_funnel else ""
-        summary = f"{label} Detail — Closer: {w_closer} · Setter: {w_setter}{nf_str}{pct_str}"
-
-        nf_row = ""
-        if show_no_funnel:
-            nf_row = f"""
-            <tr style="border-top:2px solid #e0e0e0;"><td class="metric" style="color:#b45309;"><a href="https://app.close.com/leads/save_0pf4Svd4OxrDacy9sUSqL0pr9W9243ouu9nA3mzcv4B/" target="_blank" style="color:#b45309;text-decoration:none;border-bottom:1px dashed #b45309;font-size:0.68rem;">Discovery w/ No Funnel ↗</a></td>{nofunnel_r}</tr>"""
-
-        return f"""
-  <div class="ltf-collapsible">
-    <details>
-      <summary>{summary}</summary>
-      <div class="card" style="margin-top:0.5rem;">
-        <table><colgroup><col style="width:200px"><col span="{n_cols}"></colgroup>
-          <tbody>
-            <tr><td class="metric">Closer Calls</td>{closer_r}</tr>
-            <tr><td class="metric">Setter Calls</td>{setter_r}</tr>
-            <tr class="total-row"><td class="metric">{label} Total</td>{total_r}</tr>
-            <tr><td class="metric">Closer % / Setter %</td>{pct_r}</tr>{nf_row}
-          </tbody>
-        </table>
-      </div>
-    </details>
-  </div>"""
-
-    ltf_html = build_detail_html(ltf_daily, "LTF", show_no_funnel=True)
-
-    # ── Agency detail (IG/X/LinkedIn — each funnel gets its own closer/setter rows) ──
-    agency_html = ""
-    if agency_details:
-        funnel_rows = ""
-        grand_total_r = ""
-        grand_pct_r = ""
-        g_closer = g_setter = 0
-        # Pre-compute per-day grand totals for the combined total row
-        day_totals = {d: 0 for d in dates}
-
-        for fi, (funnel_label, detail_daily) in enumerate(agency_details):
-            if not detail_daily:
-                continue
-            closer_r = setter_r = ""
+        # Funnel rows for this rep (only funnels with data)
+        for funnel in sorted(rep_funnels):
+            funnel_cells = ""
             for d in dates:
                 t = tc(d)
-                dd = detail_daily.get(d, {"closer": 0, "setter": 0, "total": 0, "no_funnel": 0})
-                c, s = dd["closer"], dd["setter"]
-                g_closer += c; g_setter += s
-                day_totals[d] += c + s
-                closer_r += f'<td class="num ltf-closer{t}">{c}</td>' if c > 0 else f'<td class="num zero{t}">0</td>'
-                setter_r += f'<td class="num ltf-setter{t}">{s}</td>' if s > 0 else f'<td class="num zero{t}">0</td>'
+                c = day_data.get(d, {}).get(funnel, 0)
+                funnel_cells += f'<td class="num{t}">{c}</td>' if c > 0 else f'<td class="num zero{t}">0</td>'
+            rep_rows += f'<tr><td class="metric" style="padding-left:1.2rem;font-size:0.72rem;color:#555;">{funnel}</td>{funnel_cells}</tr>\n'
 
-            sep = ' style="border-top:2px solid #e0e0e0;"' if fi > 0 else ""
-            funnel_rows += f'<tr{sep}><td class="metric">{funnel_label} Closer</td>{closer_r}</tr>\n'
-            funnel_rows += f'<tr><td class="metric">{funnel_label} Setter</td>{setter_r}</tr>\n'
+    rep_summary = "Rep Details — " + " · ".join(rep_summary_parts) if rep_summary_parts else "Rep Details — No calls"
 
-        # Grand total row
-        for d in dates:
-            t = tc(d)
-            tot = day_totals[d]
-            grand_total_r += f'<td class="num ltf-total{t}">{tot}</td>' if tot > 0 else f'<td class="num zero{t}">0</td>'
-            if tot > 0:
-                cp = round(day_totals[d] / tot * 100) if tot > 0 else 0
-                # Need closer vs setter per day for pct
-            grand_pct_r += f'<td class="num zero{t}">–</td>'
-
-        # Recalculate per-day closer/setter for percentage row
-        grand_pct_r = ""
-        for d in dates:
-            t = tc(d)
-            dc = sum(detail_daily.get(d, {"closer": 0})["closer"] for _, detail_daily in agency_details if detail_daily)
-            ds = sum(detail_daily.get(d, {"setter": 0})["setter"] for _, detail_daily in agency_details if detail_daily)
-            dtot = dc + ds
-            if dtot > 0:
-                cp = round(dc / dtot * 100); sp = 100 - cp
-                grand_pct_r += f'<td class="num ltf-pct{t}">{cp}% / {sp}%</td>'
-            else:
-                grand_pct_r += f'<td class="num zero{t}">–</td>'
-
-        g_total = g_closer + g_setter
-        pct_str = f" · {round(g_closer / g_total * 100)}% / {100 - round(g_closer / g_total * 100)}%" if g_total > 0 else ""
-        summary = f"IG/X/LinkedIn Detail — Closer: {g_closer} · Setter: {g_setter}{pct_str}"
-
-        agency_html = f"""
+    rep_html = f"""
   <div class="ltf-collapsible">
     <details>
-      <summary>{summary}</summary>
+      <summary>{rep_summary}</summary>
       <div class="card" style="margin-top:0.5rem;">
         <table><colgroup><col style="width:200px"><col span="{n_cols}"></colgroup>
           <tbody>
-            {funnel_rows}
-            <tr class="total-row"><td class="metric">Combined Total</td>{grand_total_r}</tr>
-            <tr><td class="metric">Closer % / Setter %</td>{grand_pct_r}</tr>
+            {rep_rows}
           </tbody>
         </table>
       </div>
@@ -876,8 +837,7 @@ def generate_rolling_html(data, ltf_daily=None, agency_details=None):
       </tbody>
     </table>
   </div>
-  {ltf_html}
-  {agency_html}
+  {rep_html}
 
   <div class="footer">
     <span>Source: First Sales Call Booked Date field · Lane 1 reps only · {len(data['valid_meetings'])} leads in window · <a href="archive.html">📁 Archive</a></span>
@@ -1419,8 +1379,6 @@ def main():
     log(f"📅 Today: {today} ({today.strftime('%A')}) · Run started: {now_at_start.strftime('%I:%M %p %Z')}")
     Path(ARCHIVE_DIR).mkdir(exist_ok=True)
 
-    all_meetings = fetch_all_meetings()
-
     # ── Rolling dashboard (field-based) ──
     log("\n═══ Rolling Dashboard ═══")
     rolling_start = today - timedelta(days=4)
@@ -1429,31 +1387,7 @@ def main():
     field_leads = fetch_field_leads(rolling_start, rolling_end)
     rolling_data = build_dashboard_data(field_leads, rolling_dates, today=today)
 
-    # ── Funnel Detail (setter calls from Kristin/Spencer — still meeting-based) ──
-    log("\n═══ Funnel Detail (LTF + Instagram) ═══")
-    setter_meetings = classify_setter_meetings(all_meetings, rolling_start, rolling_end)
-    log(f"   Setter meetings in window: {len(setter_meetings)}")
-    setter_lead_cache = {}
-    setter_lead_ids = list(set(m["lead_id"] for m in setter_meetings if m.get("lead_id")))
-    if setter_lead_ids:
-        log(f"   Fetching {len(setter_lead_ids)} leads for setter data...")
-        for lid in setter_lead_ids:
-            try:
-                setter_lead_cache[lid] = close_get(f"lead/{lid}", {"_fields": LEAD_FIELDS})
-            except requests.HTTPError:
-                setter_lead_cache[lid] = None
-    ltf_daily = build_funnel_detail(rolling_data, setter_meetings, setter_lead_cache, rolling_dates, "Low Ticket Funnel", "LTF", track_no_funnel=True)
-    ig_daily = build_funnel_detail(rolling_data, setter_meetings, setter_lead_cache, rolling_dates, "Instagram", "Instagram")
-    x_daily = build_funnel_detail(rolling_data, setter_meetings, setter_lead_cache, rolling_dates, "X", "X")
-    li_daily = build_funnel_detail(rolling_data, setter_meetings, setter_lead_cache, rolling_dates, "Linkedin", "LinkedIn")
-
-    agency_details = [
-        ("Instagram", ig_daily),
-        ("X", x_daily),
-        ("LinkedIn", li_daily),
-    ]
-
-    html = generate_rolling_html(rolling_data, ltf_daily=ltf_daily, agency_details=agency_details)
+    html = generate_rolling_html(rolling_data)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f: f.write(html)
     log(f"✅ {OUTPUT_FILE} written ({len(rolling_data['valid_meetings'])} leads)")
 
