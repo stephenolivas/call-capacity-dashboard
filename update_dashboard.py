@@ -117,7 +117,6 @@ FUNNEL_CONFIG = [
     {"name": "YouTube",                 "close_values": ["YouTube - OG - Cam"],"monthly_goal": 132, "section": "inhouse"},
     {"name": "X",                       "close_values": ["X"],                 "monthly_goal": 30,  "section": "external"},
     {"name": "Linkedin",                "close_values": ["Linkedin"],          "monthly_goal": 30,  "section": "external"},
-    {"name": "Instagram Setter",        "close_values": ["Instagram Setter"],  "monthly_goal": None, "section": "external"},
     {"name": "Meta Ads",                "close_values": ["Meta Ads"],          "monthly_goal": 44,  "section": "inhouse"},
     # ── In-House ──
     {"name": "VSL",                     "close_values": ["VSL"],               "monthly_goal": 110, "section": "inhouse"},
@@ -1054,7 +1053,6 @@ FUNNEL_SHORT = {
     "YouTube":                  "YT",
     "X":                        "X",
     "Linkedin":                 "LinkedIn",
-    "Instagram Setter":         "IG Setter",
     "Meta Ads":                 "Meta Ads",
     "VSL":                      "VSL",
     "Website":                  "Website",
@@ -1234,11 +1232,11 @@ def format_eod_email(data):
         if data["icp_lines"] else "* None"
     )
 
-    subject = f"EOD Stats {date_str}"
+    subject = f"EOD Stats {date_str} - Lane 1"
 
     # ── Plain text ────────────────────────────────────────────────────────────
     plain = (
-        f"EOD stats for {date_str}:\n\n"
+        f"Lane 1 EOD stats for {date_str}:\n\n"
         f"Revenue: {rev_str}\n"
         f"Deals Closed: {data['deals']}\n"
         f"Closers: {closers_str}\n"
