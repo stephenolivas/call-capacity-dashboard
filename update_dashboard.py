@@ -65,13 +65,13 @@ LEAD_FIELDS = ",".join(["id", "display_name", "name", "status_id", FIELD_FUNNEL_
 # Lane 1 reps — only leads owned by these reps appear on this dashboard.
 # Jason Aaron is temporarily in both lanes during the re-org transition.
 LANE_1_REPS = {
-    "Robin Perkins",
-    "Eric Piccione",
-    "Jason Aaron",
-    "Scott Seymour",
-    "Chris Wanke",
-    "Jake Skinner",
-    "Christian Hartwell",
+    "user_7F059xEinVentOEvkRMP77fWZyvwUiTRTUOuhD11J0e",  # Robin Perkins
+    "user_wF5aATmDljO6g6AHqehRPVmfCmH5j9VszbO6Q6Pjzm4",  # Eric Piccione
+    "user_MrBLkl5wCqTm7QxHxPo2ydNV5KxMllg6YZDVc12Aqzj",  # Jason Aaron
+    "user_F0VeLnOQlWpkDncNW8rBl1V2QJ08fnDt6DcUjNATUJK",  # Scott Seymour
+    "user_pKEujUcHJfsEyI5lM6L56aXM2s5nNOU994JRjRSlAdA",  # Chris Wanke
+    "user_fYWHvOuCKDuaQxSp6lROlv2rmvZZYq1kzjGvaF7OrAL",  # Jake Skinner
+    "user_wHm1vcLde4RExd3vv9UOjnms5Oz8ssXg8600mQuxMPb",  # Christian Hartwell
 }
 
 # Lead statuses excluded from capacity count (matches rep scorecard methodology)
