@@ -1232,11 +1232,11 @@ def format_eod_email(data):
         if data["icp_lines"] else "* None"
     )
 
-    subject = f"EOD Stats {date_str} - Lane 1"
+    subject = f"EOD Stats {date_str}"
 
     # ── Plain text ────────────────────────────────────────────────────────────
     plain = (
-        f"Lane 1 EOD stats for {date_str}:\n\n"
+        f"EOD stats for {date_str}:\n\n"
         f"Revenue: {rev_str}\n"
         f"Deals Closed: {data['deals']}\n"
         f"Closers: {closers_str}\n"
