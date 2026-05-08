@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Call Capacity Dashboard - Lane 1 Reps Generator (v13)
+Call Capacity Dashboard Generator (v13)
 
 New:
 - Funnel sections: External / In-House / Uncategorized
@@ -64,25 +64,47 @@ LEAD_FIELDS = ",".join(["id", "display_name", "name", "status_id", FIELD_FUNNEL_
 
 # Lane 1 reps — only leads owned by these reps appear on this dashboard.
 # Jason Aaron is temporarily in both lanes during the re-org transition.
+# Lane 1 reps — Christian Hartwell is Lane 1 Lead
 LANE_1_REPS = {
     "user_7F059xEinVentOEvkRMP77fWZyvwUiTRTUOuhD11J0e",  # Robin Perkins
     "user_wF5aATmDljO6g6AHqehRPVmfCmH5j9VszbO6Q6Pjzm4",  # Eric Piccione
-    "user_MrBLkl5wCqTm7QxHxPo2ydNV5KxMllg6YZDVc12Aqzj",  # Jason Aaron
     "user_F0VeLnOQlWpkDncNW8rBl1V2QJ08fnDt6DcUjNATUJK",  # Scott Seymour
     "user_pKEujUcHJfsEyI5lM6L56aXM2s5nNOU994JRjRSlAdA",  # Chris Wanke
     "user_fYWHvOuCKDuaQxSp6lROlv2rmvZZYq1kzjGvaF7OrAL",  # Jake Skinner
-    "user_wHm1vcLde4RExd3vv9UOjnms5Oz8ssXg8600mQuxMPb",  # Christian Hartwell
+    "user_wHm1vcLde4RExd3vv9UOjnms5Oz8ssXg8600mQuxMPb",  # Christian Hartwell (Lead)
 }
-
 LANE_1_REP_NAMES = {
     "user_7F059xEinVentOEvkRMP77fWZyvwUiTRTUOuhD11J0e": "Robin Perkins",
     "user_wF5aATmDljO6g6AHqehRPVmfCmH5j9VszbO6Q6Pjzm4": "Eric Piccione",
-    "user_MrBLkl5wCqTm7QxHxPo2ydNV5KxMllg6YZDVc12Aqzj": "Jason Aaron",
     "user_F0VeLnOQlWpkDncNW8rBl1V2QJ08fnDt6DcUjNATUJK": "Scott Seymour",
     "user_pKEujUcHJfsEyI5lM6L56aXM2s5nNOU994JRjRSlAdA": "Chris Wanke",
     "user_fYWHvOuCKDuaQxSp6lROlv2rmvZZYq1kzjGvaF7OrAL": "Jake Skinner",
     "user_wHm1vcLde4RExd3vv9UOjnms5Oz8ssXg8600mQuxMPb": "Christian Hartwell",
 }
+LANE_1_LEAD = "user_wHm1vcLde4RExd3vv9UOjnms5Oz8ssXg8600mQuxMPb"  # Christian Hartwell
+
+# Lane 2 reps — Jason Aaron is Lane 2 Lead
+LANE_2_REPS = {
+    "user_ulI4pdlkBQGJpFBjSfdf3U2deAXQATVPSAurnbL80T9",  # Bryan Barcus
+    "user_L0aaUNmM45X52HE7rj3VPWkxhahpoYobhDVAXamQMMD",  # Steven Starnes
+    "user_Bov31jjnHhENBy8uWNTTL8KKax8VX7o6DugLzBYOHBG",  # Lyle Hubbard
+    "user_WquWudQN7dghZsAPiNY80eJUmg1EadQg2UCQdvgbif7",  # Kelly Schrader
+    "user_I0cHZ04mBXXBvbFcnwmsc2KrcMsLsKxqjW8DtJ783Hr",  # Elvis Ellis
+    "user_5pAfnzGONQLUVLKqFQVpQ3570YV1gurVCTp1MMgfCDL",  # John Kirk
+    "user_UpJb11fzX2TuFHf7fFyWpfXr84lg2Ui7i7p5CtQkIaW",  # Cameron Caswell
+    "user_MrBLkl5wCqTm7QxHxPo2ydNV5KxMllg6YZDVc12Aqzj",  # Jason Aaron (Lead)
+}
+LANE_2_REP_NAMES = {
+    "user_ulI4pdlkBQGJpFBjSfdf3U2deAXQATVPSAurnbL80T9": "Bryan Barcus",
+    "user_L0aaUNmM45X52HE7rj3VPWkxhahpoYobhDVAXamQMMD": "Steven Starnes",
+    "user_Bov31jjnHhENBy8uWNTTL8KKax8VX7o6DugLzBYOHBG": "Lyle Hubbard",
+    "user_WquWudQN7dghZsAPiNY80eJUmg1EadQg2UCQdvgbif7": "Kelly Schrader",
+    "user_I0cHZ04mBXXBvbFcnwmsc2KrcMsLsKxqjW8DtJ783Hr": "Elvis Ellis",
+    "user_5pAfnzGONQLUVLKqFQVpQ3570YV1gurVCTp1MMgfCDL": "John Kirk",
+    "user_UpJb11fzX2TuFHf7fFyWpfXr84lg2Ui7i7p5CtQkIaW": "Cameron Caswell",
+    "user_MrBLkl5wCqTm7QxHxPo2ydNV5KxMllg6YZDVc12Aqzj": "Jason Aaron",
+}
+LANE_2_LEAD = "user_MrBLkl5wCqTm7QxHxPo2ydNV5KxMllg6YZDVc12Aqzj"  # Jason Aaron
 
 LANE_1_REP_NAMES = {
     "user_7F059xEinVentOEvkRMP77fWZyvwUiTRTUOuhD11J0e": "Robin Perkins",
@@ -402,11 +424,11 @@ def map_funnel(raw_funnel):
     return raw_funnel
 
 
-def build_dashboard_data(field_leads, dates, today=None):
+def build_dashboard_data(field_leads, dates, today=None, lane_reps=None, lane_label=""):
     """Build dashboard data from field-based lead query.
     field_leads: list of lead dicts from fetch_field_leads (or similar).
-    Each lead has id, display_name, status_id, First Sales Call Booked Date, Funnel, Lead Owner.
-    No title classification or dedup needed — the field handles both natively.
+    lane_reps: set of user IDs to filter by (if None, no lane filter applied).
+    lane_label: label for logging (e.g., "Lane 1", "Lane 2").
     """
     daily_data = {}
     all_funnels_seen = set()
@@ -415,8 +437,9 @@ def build_dashboard_data(field_leads, dates, today=None):
 
     # Per-rep tracking: { user_id: { date: { funnel: count } } }
     rep_data = {}
-    for uid in LANE_1_REPS:
-        rep_data[uid] = {d: {} for d in dates}
+    if lane_reps:
+        for uid in lane_reps:
+            rep_data[uid] = {d: {} for d in dates}
 
     valid_meetings = []
     status_excluded = 0
@@ -428,9 +451,9 @@ def build_dashboard_data(field_leads, dates, today=None):
             status_excluded += 1
             continue
 
-        # Lane 1 filter — only count leads owned by Lane 1 reps
+        # Lane filter — only count leads owned by reps in this lane
         lead_owner = (lead.get(FIELD_LEAD_OWNER) or "").strip()
-        if lead_owner not in LANE_1_REPS:
+        if lane_reps and lead_owner not in lane_reps:
             lane_excluded += 1
             continue
 
@@ -455,7 +478,8 @@ def build_dashboard_data(field_leads, dates, today=None):
         daily_data[field_date]["funnels"][funnel] = daily_data[field_date]["funnels"].get(funnel, 0) + 1
 
         # Track per-rep
-        rep_data[lead_owner][field_date][funnel] = rep_data[lead_owner][field_date].get(funnel, 0) + 1
+        if lane_reps and lead_owner in rep_data:
+            rep_data[lead_owner][field_date][funnel] = rep_data[lead_owner][field_date].get(funnel, 0) + 1
 
         valid_meetings.append({
             "date": field_date,
@@ -468,8 +492,8 @@ def build_dashboard_data(field_leads, dates, today=None):
     if status_excluded > 0:
         log(f"   ⚠ Excluded {status_excluded} leads (status: Canceled/Outside US)")
     if lane_excluded > 0:
-        log(f"   ⚠ Excluded {lane_excluded} leads (Lead Owner not in Lane 1)")
-    log(f"   📊 {len(valid_meetings)} Lane 1 leads counted across window")
+        log(f"   ⚠ Excluded {lane_excluded} leads (Lead Owner not in {lane_label})")
+    log(f"   📊 {len(valid_meetings)} {lane_label} leads counted across window")
 
     return {
         "dates": dates,
@@ -619,7 +643,7 @@ def util_class(pct):
 # ─── Funnel Row Builder ─────────────────────────────────────────────────────
 
 def build_funnel_rows(data, dates, today, daily_goal_map, section_filter):
-    """Build HTML rows for funnels in a given section."""
+    """Build HTML rows for funnels in a given section. Only shows funnels with ≥1 call."""
     daily = data["daily_data"]
     rows = ""
 
@@ -629,9 +653,22 @@ def build_funnel_rows(data, dates, today, daily_goal_map, section_filter):
     for fc in section_funnels:
         fname = fc["name"]
         dg = daily_goal_map.get(fname)
+
+        # Dynamic: check if this funnel has any calls in the window
+        has_any = False
+        for d in dates:
+            for cv in fc["close_values"]:
+                mapped_name = CLOSE_VALUE_TO_FUNNEL.get(cv, cv)
+                if daily[d]["funnels"].get(mapped_name, 0) > 0:
+                    has_any = True
+                    break
+            if has_any:
+                break
+        if not has_any:
+            continue
+
         cells = ""
         for d in dates:
-            # Sum all close_values that map to this funnel
             count = 0
             for cv in fc["close_values"]:
                 mapped_name = CLOSE_VALUE_TO_FUNNEL.get(cv, cv)
@@ -656,24 +693,25 @@ def build_funnel_rows(data, dates, today, daily_goal_map, section_filter):
 
 
 def build_uncategorized_rows(data, dates, today):
-    """Build rows for No Attribution, Unknown, and any unmapped funnels."""
+    """Build rows for No Attribution, Unknown, and any unmapped funnels. Only shows rows with ≥1 call."""
     daily = data["daily_data"]
     all_seen = data.get("all_funnels_seen", set())
 
-    # Known configured funnel display names
     configured_names = set(fc["name"] for fc in FUNNEL_CONFIG)
-
-    # Find unmapped funnels (seen in data but not in config)
     unmapped = set()
     for f in all_seen:
         if f not in configured_names and f not in UNCATEGORIZED_FUNNELS:
             unmapped.add(f)
 
-    # Always show No Attribution and Unknown (Needs Review), plus any unmapped
     uncat_list = UNCATEGORIZED_FUNNELS + sorted(unmapped)
 
     rows = ""
     for fname in uncat_list:
+        # Dynamic: skip if no calls in window
+        has_any = any(daily[d]["funnels"].get(fname, 0) > 0 for d in dates)
+        if not has_any:
+            continue
+
         cells = ""
         for d in dates:
             count = daily[d]["funnels"].get(fname, 0)
@@ -689,34 +727,14 @@ def build_uncategorized_rows(data, dates, today):
 
 # ─── Rolling Dashboard HTML ─────────────────────────────────────────────────
 
-def generate_rolling_html(data):
-    dates = data["dates"]
+def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_names, lane_lead):
+    """Generate the inner HTML content for one lane (capacity + funnels + rep details)."""
     daily = data["daily_data"]
-    today = data["today"]
-
-    now_pacific = datetime.now(PACIFIC)  # noqa — must stay on this line
-    last_updated = now_pacific.strftime("%I:%M %p %Z")
-    last_updated_date = now_pacific.strftime("%A, %B %-d, %Y")
-
-    # Calculate daily goals for current month
-    year, month = now_pacific.year, now_pacific.month
-    daily_goal_map = {}
-    for fc in FUNNEL_CONFIG:
-        dg = get_daily_goal(fc["monthly_goal"], year, month)
-        daily_goal_map[fc["name"]] = dg
-
-    n_cols = len(dates)
 
     def tc(d):
         if d == today: return " today"
         elif d < today: return " past"
         return ""
-
-    date_headers = ""
-    for d in dates:
-        label = "► TODAY" if d == today else d.strftime("%a").upper()
-        ds = d.strftime("%m/%d")
-        date_headers += f'<th class="col-date{tc(d)}">{label}<br>{ds}</th>'
 
     # Capacity metrics
     cap_r = booked_r = avail_r = util_r = ""
@@ -731,7 +749,7 @@ def generate_rolling_html(data):
         else:
             util_r += f'<td class="num{t}">N/A</td>'
 
-    # Funnel section rows
+    # Funnel section rows (dynamic — only funnels with >=1 call)
     ext_rows = build_funnel_rows(data, dates, today, daily_goal_map, "external")
     inh_rows = build_funnel_rows(data, dates, today, daily_goal_map, "inhouse")
     unc_rows = build_uncategorized_rows(data, dates, today)
@@ -742,18 +760,26 @@ def generate_rolling_html(data):
         t = tc(d)
         total_cells += f'<td class="num total-num{t}">{daily[d]["booked"]}</td>'
 
-    # (Excluded titles section removed — field-based counting replaces title classification)
+    # Date headers
+    date_headers = ""
+    for d in dates:
+        label = "► TODAY" if d == today else d.strftime("%a").upper()
+        ds = d.strftime("%m/%d")
+        date_headers += f'<th class="col-date{tc(d)}">{label}<br>{ds}</th>'
 
-    # ── Rep Details (per-rep funnel breakdown) ──
+    # Rep Details
     rep_data = data.get("rep_data", {})
     rep_rows = ""
     rep_summary_parts = []
 
-    for uid in LANE_1_REPS:
-        rep_name = LANE_1_REP_NAMES.get(uid, uid)
+    # Sort reps alphabetically, lead last
+    sorted_uids = sorted(lane_rep_names.keys(), key=lambda uid: (uid == lane_lead, lane_rep_names[uid]))
+
+    for uid in sorted_uids:
+        rep_name = lane_rep_names.get(uid, uid)
+        badge = ' <span style="background:#2563eb;color:#fff;font-size:0.6rem;padding:1px 6px;border-radius:3px;margin-left:4px;">Lead</span>' if uid == lane_lead else ""
         day_data = rep_data.get(uid, {})
 
-        # Collect all funnels this rep has across the window
         rep_funnels = set()
         rep_total = 0
         for d in dates:
@@ -764,7 +790,6 @@ def generate_rolling_html(data):
         if rep_total > 0:
             rep_summary_parts.append(f"{rep_name.split()[0]}: {rep_total}")
 
-        # Rep header row (name + daily totals)
         header_cells = ""
         for d in dates:
             t = tc(d)
@@ -772,9 +797,8 @@ def generate_rolling_html(data):
             header_cells += f'<td class="num ltf-total{t}">{day_total}</td>' if day_total > 0 else f'<td class="num zero{t}">0</td>'
 
         sep = ' style="border-top:2px solid #e0e0e0;"' if rep_rows else ""
-        rep_rows += f'<tr{sep}><td class="metric" style="font-weight:700;padding-top:0.5rem;">{rep_name}</td>{header_cells}</tr>\n'
+        rep_rows += f'<tr{sep}><td class="metric" style="font-weight:700;padding-top:0.5rem;">{rep_name}{badge}</td>{header_cells}</tr>\n'
 
-        # Funnel rows for this rep (only funnels with data)
         for funnel in sorted(rep_funnels):
             funnel_cells = ""
             for d in dates:
@@ -785,31 +809,28 @@ def generate_rolling_html(data):
 
     rep_summary = "Rep Details — " + " · ".join(rep_summary_parts) if rep_summary_parts else "Rep Details — No calls"
 
-    rep_html = f"""
-  <div class="ltf-collapsible">
-    <details>
-      <summary>{rep_summary}</summary>
-      <div class="card" style="margin-top:0.5rem;">
-        <table><colgroup><col style="width:200px"><col span="{n_cols}"></colgroup>
-          <tbody>
-            {rep_rows}
-          </tbody>
-        </table>
-      </div>
-    </details>
-  </div>"""
+    # Build section HTML, only include sections with rows
+    funnel_html = ""
+    if ext_rows:
+        funnel_html += f"""
+    <div class="sec">FUNNEL BREAKDOWN — EXTERNAL</div>
+    <table><colgroup><col style="width:200px"><col span="{n_cols}"></colgroup>
+      <tbody>{ext_rows}</tbody>
+    </table>"""
+    if inh_rows:
+        funnel_html += f"""
+    <div class="sec">FUNNEL BREAKDOWN — IN-HOUSE</div>
+    <table><colgroup><col style="width:200px"><col span="{n_cols}"></colgroup>
+      <tbody>{inh_rows}</tbody>
+    </table>"""
+    if unc_rows:
+        funnel_html += f"""
+    <div class="sec">FUNNEL BREAKDOWN — UNCATEGORIZED</div>
+    <table><colgroup><col style="width:200px"><col span="{n_cols}"></colgroup>
+      <tbody>{unc_rows}</tbody>
+    </table>"""
 
-    wd = working_days_in_month(year, month)
-
-    return f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Call Capacity Dashboard - Lane 1 Reps</title>
-<style>{COMMON_CSS}</style>
-</head><body>
-{html_header_bar("Call Capacity Dashboard - Lane 1 Reps", f"4-Day Trailing + 10-Day Lookahead · First Meetings Only · {wd} working days in {now_pacific.strftime('%B')}", last_updated_date, "Last updated: " + last_updated)}
-<div class="wrap">
-
+    return f"""
   <div class="card">
     <div class="sec">CAPACITY METRICS</div>
     <table><colgroup><col style="width:200px"><col span="{n_cols}"></colgroup>
@@ -824,25 +845,99 @@ def generate_rolling_html(data):
   </div>
 
   <div class="card">
+    {funnel_html}
     <table><colgroup><col style="width:200px"><col span="{n_cols}"></colgroup>
       <tbody>
-        <tr class="section-label-row sec-ext"><td colspan="{n_cols + 1}">Funnel Breakdown — External</td></tr>
-        {ext_rows}
-        <tr class="section-label-row sec-inh"><td colspan="{n_cols + 1}">Funnel Breakdown — In-House</td></tr>
-        {inh_rows}
-        <tr class="section-label-row sec-unc"><td colspan="{n_cols + 1}">Funnel Breakdown — Uncategorized</td></tr>
-        {unc_rows}
         <tr class="total-row"><td class="metric">TOTAL</td>{total_cells}</tr>
       </tbody>
     </table>
   </div>
-  {rep_html}
+
+  <div class="ltf-collapsible">
+    <details>
+      <summary>{rep_summary}</summary>
+      <div class="card" style="margin-top:0.5rem;">
+        <table><colgroup><col style="width:200px"><col span="{n_cols}"></colgroup>
+          <tbody>
+            {rep_rows}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  </div>"""
+
+
+def generate_rolling_html(lane1_data, lane2_data):
+    dates = lane1_data["dates"]
+    today = lane1_data["today"]
+
+    now_pacific = datetime.now(PACIFIC)
+    last_updated = now_pacific.strftime("%I:%M %p %Z")
+    last_updated_date = now_pacific.strftime("%A, %B %-d, %Y")
+
+    year, month = now_pacific.year, now_pacific.month
+    daily_goal_map = {}
+    for fc in FUNNEL_CONFIG:
+        dg = get_daily_goal(fc["monthly_goal"], year, month)
+        daily_goal_map[fc["name"]] = dg
+
+    n_cols = len(dates)
+    wd = working_days_in_month(year, month)
+
+    lane1_content = generate_lane_content(lane1_data, dates, today, daily_goal_map, n_cols, LANE_1_REP_NAMES, LANE_1_LEAD)
+    lane2_content = generate_lane_content(lane2_data, dates, today, daily_goal_map, n_cols, LANE_2_REP_NAMES, LANE_2_LEAD)
+
+    toggle_css = """
+    .lane-toggle { display:flex; gap:8px; margin-bottom:1rem; }
+    .lane-btn { padding:10px 24px; font-size:0.95rem; font-weight:700; border:2px solid #222;
+                border-radius:6px; cursor:pointer; transition:all 0.15s; background:#fff; color:#222; }
+    .lane-btn.active { background:#222; color:#fff; }
+    .lane-btn:hover:not(.active) { background:#f0f0f0; }
+    """
+
+    toggle_js = """
+    <script>
+    function showLane(n) {
+      document.getElementById('lane1').style.display = n===1 ? 'block' : 'none';
+      document.getElementById('lane2').style.display = n===2 ? 'block' : 'none';
+      document.getElementById('btn1').className = 'lane-btn' + (n===1 ? ' active' : '');
+      document.getElementById('btn2').className = 'lane-btn' + (n===2 ? ' active' : '');
+    }
+    </script>
+    """
+
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Call Capacity Dashboard</title>
+<style>{COMMON_CSS}
+{toggle_css}
+</style>
+</head><body>
+{html_header_bar("Call Capacity Dashboard", f"4-Day Trailing + 10-Day Lookahead · First Meetings Only · {wd} working days in {now_pacific.strftime('%B')}", last_updated_date, "Last updated: " + last_updated)}
+<div class="wrap">
+
+  <div class="lane-toggle">
+    <button id="btn1" class="lane-btn active" onclick="showLane(1)">Lane 1</button>
+    <button id="btn2" class="lane-btn" onclick="showLane(2)">Lane 2</button>
+  </div>
+
+  <div id="lane1">
+  {lane1_content}
+  </div>
+
+  <div id="lane2" style="display:none;">
+  {lane2_content}
+  </div>
 
   <div class="footer">
-    <span>Source: First Sales Call Booked Date field · Lane 1 reps only · {len(data['valid_meetings'])} leads in window · <a href="archive.html">📁 Archive</a></span>
+    <span>Source: First Sales Call Booked Date field · <a href="archive.html">📁 Archive</a></span>
     <a href="https://stephenolivas.github.io/mtd-funnel-dashboard/" target="_blank">📊 MTD Funnel Reporting →</a>
   </div>
-</div></body></html>"""
+</div>
+{toggle_js}
+</body></html>"""
+
 
 
 # ─── Weekly Summary HTML ─────────────────────────────────────────────────────
@@ -1007,8 +1102,8 @@ def generate_archive_html(archive_dir):
         return rows
 
     now_pacific = datetime.now(PACIFIC)
-    return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Call Capacity Dashboard - Lane 1 Reps — Archive</title><style>{COMMON_CSS} a:hover {{ text-decoration: underline !important; }}</style></head><body>
-{html_header_bar("Call Capacity Dashboard - Lane 1 Reps — Archive", "Historical snapshots and summaries", now_pacific.strftime("%A, %B %-d, %Y"), "Updated: " + now_pacific.strftime("%I:%M %p %Z"))}
+    return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Call Capacity Dashboard — Archive</title><style>{COMMON_CSS} a:hover {{ text-decoration: underline !important; }}</style></head><body>
+{html_header_bar("Call Capacity Dashboard — Archive", "Historical snapshots and summaries", now_pacific.strftime("%A, %B %-d, %Y"), "Updated: " + now_pacific.strftime("%I:%M %p %Z"))}
 <div class="wrap">
   <div style="margin-bottom:1rem;"><a href="index.html" style="color:#1b7a2e; font-weight:600; text-decoration:none; font-size:0.85rem;">← Back to Live Dashboard</a></div>
   <div class="card"><div class="sec">📈 MONTHLY SUMMARIES</div><table style="table-layout:auto"><tbody>{make_links(monthly_files)}</tbody></table></div>
@@ -1269,7 +1364,7 @@ def format_eod_email(data):
 
         <!-- Header -->
         <tr><td style="background:#1b2e1b;border-radius:8px 8px 0 0;padding:24px 28px;">
-          <p style="margin:0;color:#a3c4a3;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">Call Capacity Dashboard - Lane 1 Reps</p>
+          <p style="margin:0;color:#a3c4a3;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">Call Capacity Dashboard</p>
           <h1 style="margin:6px 0 0;color:#ffffff;font-size:22px;font-weight:700;">EOD Stats — {date_str}</h1>
           <p style="margin:4px 0 0;color:#a3c4a3;font-size:12px;">{day_full}</p>
         </td></tr>
@@ -1300,7 +1395,7 @@ def format_eod_email(data):
 
         <!-- Footer -->
         <tr><td style="padding:16px 0 0;text-align:center;">
-          <p style="margin:0;color:#aaa;font-size:11px;">Auto-generated by Call Capacity Dashboard - Lane 1 Reps · <a href="https://stephenolivas.github.io/call-capacity-dashboard/index.html" style="color:#1b7a2e;text-decoration:none;">View Dashboard →</a></p>
+          <p style="margin:0;color:#aaa;font-size:11px;">Auto-generated by Call Capacity Dashboard · <a href="https://stephenolivas.github.io/call-capacity-dashboard/index.html" style="color:#1b7a2e;text-decoration:none;">View Dashboard →</a></p>
         </td></tr>
 
       </table>
@@ -1365,7 +1460,7 @@ def main():
         log("❌ Error: CLOSE_API_KEY environment variable is not set."); sys.exit(1)
 
     _api_call_count = 0; start_time = time.time()
-    log("🚀 Starting Call Capacity Dashboard - Lane 1 Reps update (v13 — funnel goals + sections)...")
+    log("🚀 Starting Call Capacity Dashboard update (v14 — dual-lane + rep details)...")
 
     # Capture time NOW before the ~5 min API calls, so hour checks at the end
     # reflect when this run *started*, not when it finished.
@@ -1377,17 +1472,24 @@ def main():
     log(f"📅 Today: {today} ({today.strftime('%A')}) · Run started: {now_at_start.strftime('%I:%M %p %Z')}")
     Path(ARCHIVE_DIR).mkdir(exist_ok=True)
 
-    # ── Rolling dashboard (field-based) ──
+    # ── Rolling dashboard (field-based, both lanes) ──
     log("\n═══ Rolling Dashboard ═══")
     rolling_start = today - timedelta(days=4)
     rolling_end = today + timedelta(days=10)
     rolling_dates = [rolling_start + timedelta(days=i) for i in range(14)]
     field_leads = fetch_field_leads(rolling_start, rolling_end)
-    rolling_data = build_dashboard_data(field_leads, rolling_dates, today=today)
 
-    html = generate_rolling_html(rolling_data)
+    log("\n── Lane 1 ──")
+    lane1_data = build_dashboard_data(field_leads, rolling_dates, today=today, lane_reps=LANE_1_REPS, lane_label="Lane 1")
+    log("\n── Lane 2 ──")
+    lane2_data = build_dashboard_data(field_leads, rolling_dates, today=today, lane_reps=LANE_2_REPS, lane_label="Lane 2")
+
+    # Use Lane 1 as the "primary" for EOD email / archive counting
+    rolling_data = lane1_data
+
+    html = generate_rolling_html(lane1_data, lane2_data)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f: f.write(html)
-    log(f"✅ {OUTPUT_FILE} written ({len(rolling_data['valid_meetings'])} leads)")
+    log(f"✅ {OUTPUT_FILE} written (L1: {len(lane1_data['valid_meetings'])} · L2: {len(lane2_data['valid_meetings'])} leads)")
 
     # ── Daily snapshot ──
     log("\n═══ Daily Snapshot ═══")
@@ -1401,7 +1503,7 @@ def main():
         pm = today - timedelta(days=7); ps = today - timedelta(days=1)
         wd = [pm + timedelta(days=i) for i in range(7)]
         w_leads = fetch_field_leads(pm, ps + timedelta(days=1))
-        wdata = build_dashboard_data(w_leads, wd)
+        wdata = build_dashboard_data(w_leads, wd, lane_reps=LANE_1_REPS, lane_label="Lane 1")
         wh = generate_weekly_html(wdata, pm)
         wp = f"{ARCHIVE_DIR}/week-{pm.isoformat()}.html"
         with open(wp, "w", encoding="utf-8") as f: f.write(wh)
@@ -1415,7 +1517,7 @@ def main():
         pme = today - timedelta(days=1); pms = pme.replace(day=1)
         nd = (pme - pms).days + 1; md = [pms + timedelta(days=i) for i in range(nd)]
         m_leads = fetch_field_leads(pms, today)
-        mdata = build_dashboard_data(m_leads, md)
+        mdata = build_dashboard_data(m_leads, md, lane_reps=LANE_1_REPS, lane_label="Lane 1")
         mh = generate_monthly_html(mdata, pms)
         mp = f"{ARCHIVE_DIR}/month-{pms.strftime('%Y-%m')}.html"
         with open(mp, "w", encoding="utf-8") as f: f.write(mh)
