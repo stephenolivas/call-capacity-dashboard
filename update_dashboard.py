@@ -1478,8 +1478,9 @@ def main():
     log("\n── Lane 2 ──")
     lane2_data = build_dashboard_data(field_leads, rolling_dates, today=today, lane_reps=LANE_2_REPS, lane_label="Lane 2")
 
-    # Use Lane 1 as the "primary" for EOD email / archive counting
-    rolling_data = lane1_data
+    # Build all-reps data for EOD email (no lane filter — counts all sales calls)
+    log("\n── All Reps (EOD email) ──")
+    rolling_data = build_dashboard_data(field_leads, rolling_dates, today=today, lane_reps=None, lane_label="All Reps")
 
     html = generate_rolling_html(lane1_data, lane2_data)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f: f.write(html)
