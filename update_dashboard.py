@@ -62,8 +62,6 @@ FIELD_FIRST_SALES_CALL = "custom.cf_LFdYEQ6bsgp49YjZzefypDmdVx8iwuakWDSLPLpVrBq"
 FIELD_LEAD_OWNER       = "custom.cf_gOfS9pFwext58oberEegLyix8hZzeHrxhCZOVh3P3rd"
 LEAD_FIELDS = ",".join(["id", "display_name", "name", "status_id", FIELD_FUNNEL_NAME_DEAL])
 
-# Lane 1 reps — only leads owned by these reps appear on this dashboard.
-# Jason Aaron is temporarily in both lanes during the re-org transition.
 # Lane 1 reps — Christian Hartwell is Lane 1 Lead
 LANE_1_REPS = {
     "user_7F059xEinVentOEvkRMP77fWZyvwUiTRTUOuhD11J0e",  # Robin Perkins
@@ -727,7 +725,7 @@ def build_uncategorized_rows(data, dates, today):
 
 # ─── Rolling Dashboard HTML ─────────────────────────────────────────────────
 
-def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_names, lane_lead):
+def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_names, lane_lead, show_capacity=True):
     """Generate the inner HTML content for one lane (capacity + funnels + rep details)."""
     daily = data["daily_data"]
 
@@ -740,13 +738,19 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
     cap_r = booked_r = avail_r = util_r = ""
     for d in dates:
         c = daily[d]["capacity"]; b = daily[d]["booked"]; t = tc(d)
-        cap_r += f'<td class="num{t}">{c if c > 0 else "–"}</td>'
-        booked_r += f'<td class="num {"booked" if b > 0 else "zero"}{t}">{b}</td>'
-        avail_r += f'<td class="num{t}">{c - b if c > 0 else "–"}</td>'
-        if c > 0:
-            pct = b / c * 100
-            util_r += f'<td class="num {util_class(pct)}{t}">{pct:.2f}%</td>'
+        if show_capacity:
+            cap_r += f'<td class="num{t}">{c if c > 0 else "–"}</td>'
+            booked_r += f'<td class="num {"booked" if b > 0 else "zero"}{t}">{b}</td>'
+            avail_r += f'<td class="num{t}">{c - b if c > 0 else "–"}</td>'
+            if c > 0:
+                pct = b / c * 100
+                util_r += f'<td class="num {util_class(pct)}{t}">{pct:.2f}%</td>'
+            else:
+                util_r += f'<td class="num{t}">N/A</td>'
         else:
+            cap_r += f'<td class="num{t}">–</td>'
+            booked_r += f'<td class="num {"booked" if b > 0 else "zero"}{t}">{b}</td>'
+            avail_r += f'<td class="num{t}">–</td>'
             util_r += f'<td class="num{t}">N/A</td>'
 
     # Funnel section rows (dynamic — only funnels with >=1 call)
@@ -884,15 +888,15 @@ def generate_rolling_html(lane1_data, lane2_data):
     n_cols = len(dates)
     wd = working_days_in_month(year, month)
 
-    lane1_content = generate_lane_content(lane1_data, dates, today, daily_goal_map, n_cols, LANE_1_REP_NAMES, LANE_1_LEAD)
-    lane2_content = generate_lane_content(lane2_data, dates, today, daily_goal_map, n_cols, LANE_2_REP_NAMES, LANE_2_LEAD)
+    lane1_content = generate_lane_content(lane1_data, dates, today, daily_goal_map, n_cols, LANE_1_REP_NAMES, LANE_1_LEAD, show_capacity=True)
+    lane2_content = generate_lane_content(lane2_data, dates, today, daily_goal_map, n_cols, LANE_2_REP_NAMES, LANE_2_LEAD, show_capacity=False)
 
     toggle_css = """
     .lane-toggle { display:flex; gap:8px; margin-bottom:1rem; }
-    .lane-btn { padding:10px 24px; font-size:0.95rem; font-weight:700; border:2px solid #222;
-                border-radius:6px; cursor:pointer; transition:all 0.15s; background:#fff; color:#222; }
-    .lane-btn.active { background:#222; color:#fff; }
-    .lane-btn:hover:not(.active) { background:#f0f0f0; }
+    .lane-btn { padding:10px 24px; font-size:0.95rem; font-weight:700; border:2px solid #1b7a2e;
+                border-radius:6px; cursor:pointer; transition:all 0.15s; background:#fff; color:#1b7a2e; }
+    .lane-btn.active { background:#1b7a2e; color:#fff; }
+    .lane-btn:hover:not(.active) { background:#f0faf0; }
     """
 
     toggle_js = """
