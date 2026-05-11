@@ -955,8 +955,7 @@ def generate_rolling_html(lane1_data, lane2_data):
 {toggle_css}
 </style>
 </head><body>
-{html_header_bar("Call Capacity Dashboard", f"4-Day Trailing + 10-Day Lookahead · First Meetings Only · {wd} working days in {now_pacific.strftime('%B')}", last_updated_date, "Last updated: " + last_updated)}
-<div style="text-align:right;margin:-0.8rem 1.5rem 0.5rem 0;"><a href="changelog.html" style="font-size:0.7rem;color:#888;text-decoration:none;">📋 Changelog</a></div>
+{html_header_bar("Call Capacity Dashboard", f"4-Day Trailing + 10-Day Lookahead · First Meetings Only · {wd} working days in {now_pacific.strftime('%B')}", last_updated_date, "Last updated: " + last_updated + ' · <a href="changelog.html" style="color:#fff;opacity:0.7;text-decoration:none;font-weight:400;">📋 Changelog</a>')}
 <div class="wrap">
 
   <div class="lane-toggle">
