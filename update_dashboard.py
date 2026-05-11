@@ -33,7 +33,7 @@ CAPACITY_NEW = {0: 42, 1: 42, 2: 42, 3: 42, 4: 42, 5: 0, 6: 0}
 CAPACITY_CUTOVER = date(2026, 5, 1)  # New capacity starts on this date
 
 def get_capacity(d):
-    """Return capacity for a given date, respecting the cutover."""
+    """Return static capacity for a given date (fallback when Calendly data unavailable)."""
     if d >= CAPACITY_CUTOVER:
         return CAPACITY_NEW[d.weekday()]
     return CAPACITY_OLD[d.weekday()]
@@ -112,6 +112,53 @@ EXCLUDED_LEAD_STATUS_IDS = {
 
 OUTPUT_FILE = os.environ.get("OUTPUT_FILE", "index.html")
 ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "archive")
+
+# ─── Changelog & Steering Committee ──────────────────────────────────────────
+# Each entry: {"date": "YYYY-MM-DD HH:MM PT", "notes": ["bullet 1", "bullet 2"]}
+
+CHANGELOG_ENTRIES = [
+    {"date": "2026-05-11 2:00 PM PT", "notes": [
+        "Added Changelog and Steering Committee Updates pages",
+        "Changelog link added to dashboard header for transparency",
+    ]},
+    {"date": "2026-05-09 11:00 AM PT", "notes": [
+        "EOD email reverted to all-reps data (no lane filter) — subject stays 'EOD Stats {date}'",
+        "Removed Instagram Setter from External funnel list",
+    ]},
+    {"date": "2026-05-08 3:00 PM PT", "notes": [
+        "Dual-lane toggle: Lane 1 / Lane 2 buttons with instant switching",
+        "Dynamic funnels: only rows with ≥1 booked call appear",
+        "Rep Details section with per-rep funnel breakdown and Lead badges",
+    ]},
+    {"date": "2026-05-08 10:00 AM PT", "notes": [
+        "Lane 2 capacity shows '–' and 'N/A' (no capacity tracking for Lane 2)",
+        "Lane toggle buttons styled with dashboard green (#1b7a2e)",
+        "Jason Aaron moved to Lane 2 only",
+    ]},
+    {"date": "2026-05-07 4:00 PM PT", "notes": [
+        "Added Lane 1 rep filter — dashboard counts only Lane 1 leads via Lead Owner field",
+        "Title updated to 'Call Capacity Dashboard' (Lane buttons indicate active view)",
+    ]},
+    {"date": "2026-05-07 10:00 AM PT", "notes": [
+        "Split AK TikTok and Anthony IG into separate funnel rows (1/day each)",
+        "LTF - Quiz Funnel added to External section",
+        "MTD Funnel link updated to mtd-funnel-dashboard",
+    ]},
+    {"date": "2026-05-01 9:00 AM PT", "notes": [
+        "Capacity changed from 57-60/day to 42/day (Mon-Fri) starting 05/01",
+        "Saturday/Sunday capacity set to 0",
+    ]},
+    {"date": "2026-04-15 2:00 PM PT", "notes": [
+        "Migrated from meeting title classification to First Sales Call Booked Date field",
+        "Field-based counting eliminates dedup issues and UTC mismatches",
+    ]},
+]
+
+STEERING_COMMITTEE_ENTRIES = [
+    # User provides these — format: {"date": "YYYY-MM-DD", "notes": ["bullet 1", ...]}
+    # Example:
+    # {"date": "2026-05-10", "notes": ["Adjusted lead scoring threshold from 50 to 65", "Added new calendar routing for LTF Quiz Funnel"]},
+]
 API_THROTTLE = 0.5
 
 # ─── Funnel Configuration ───────────────────────────────────────────────────
@@ -909,6 +956,7 @@ def generate_rolling_html(lane1_data, lane2_data):
 </style>
 </head><body>
 {html_header_bar("Call Capacity Dashboard", f"4-Day Trailing + 10-Day Lookahead · First Meetings Only · {wd} working days in {now_pacific.strftime('%B')}", last_updated_date, "Last updated: " + last_updated)}
+<div style="text-align:right;margin:-0.8rem 1.5rem 0.5rem 0;"><a href="changelog.html" style="font-size:0.7rem;color:#888;text-decoration:none;">📋 Changelog</a></div>
 <div class="wrap">
 
   <div class="lane-toggle">
@@ -1105,6 +1153,80 @@ def generate_archive_html(archive_dir):
   <div class="card"><div class="sec">📅 DAILY SNAPSHOTS</div><table style="table-layout:auto"><tbody>{make_links(daily_files)}</tbody></table></div>
   <div class="footer"><span>Archive generated {now_pacific.strftime("%b %-d, %Y at %I:%M %p %Z")}</span><a href="https://stephenolivas.github.io/mtd-funnel-dashboard/" target="_blank">📊 MTD Funnel Reporting →</a></div>
 </div></body></html>"""
+
+
+# ─── Changelog HTML ───────────────────────────────────────────────────────────
+
+def generate_changelog_html():
+    """Generate the changelog page with Dashboard Changes and Steering Committee tabs."""
+    now_pacific = datetime.now(PACIFIC)
+
+    def render_entries(entries):
+        if not entries:
+            return '<p style="color:#888;font-style:italic;">No entries yet.</p>'
+        html = ""
+        for entry in entries:
+            html += f'<div class="cl-entry"><div class="cl-date">{entry["date"]}</div><ul>'
+            for note in entry["notes"]:
+                html += f"<li>{note}</li>"
+            html += "</ul></div>"
+        return html
+
+    dashboard_entries = render_entries(CHANGELOG_ENTRIES)
+    steering_entries = render_entries(STEERING_COMMITTEE_ENTRIES)
+
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Changelog — Call Capacity Dashboard</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+         background: #faf9f6; color: #333; padding: 2rem; max-width: 800px; margin: 0 auto; }}
+  .back {{ font-size: 0.85rem; color: #1b7a2e; text-decoration: none; display: inline-block; margin-bottom: 1.5rem; }}
+  .back:hover {{ text-decoration: underline; }}
+  h1 {{ font-size: 1.5rem; font-weight: 700; margin-bottom: 0.5rem; }}
+  .subtitle {{ font-size: 0.8rem; color: #888; margin-bottom: 1.5rem; }}
+  .tabs {{ display: flex; gap: 0; border-bottom: 2px solid #e0e0e0; margin-bottom: 1.5rem; }}
+  .tab {{ padding: 10px 20px; font-size: 0.85rem; font-weight: 600; cursor: pointer;
+          border: none; background: none; color: #888; border-bottom: 2px solid transparent;
+          margin-bottom: -2px; transition: all 0.15s; }}
+  .tab.active {{ color: #1b7a2e; border-bottom-color: #1b7a2e; }}
+  .tab:hover:not(.active) {{ color: #555; }}
+  .tab-content {{ display: none; }}
+  .tab-content.active {{ display: block; }}
+  .cl-entry {{ border-left: 3px solid #1b7a2e; padding: 0.5rem 0 0.5rem 1rem; margin-bottom: 1.2rem; }}
+  .cl-date {{ font-size: 0.75rem; font-weight: 700; color: #1b7a2e; margin-bottom: 0.3rem; }}
+  .cl-entry ul {{ margin: 0; padding-left: 1.2rem; }}
+  .cl-entry li {{ font-size: 0.82rem; line-height: 1.5; color: #444; margin-bottom: 0.15rem; }}
+</style>
+</head><body>
+<a href="index.html" class="back">← Back to Dashboard</a>
+<h1>📋 Changelog</h1>
+<p class="subtitle">Last generated: {now_pacific.strftime("%b %-d, %Y at %I:%M %p %Z")}</p>
+
+<div class="tabs">
+  <button class="tab active" onclick="showTab('dashboard')">Dashboard Changes</button>
+  <button class="tab" onclick="showTab('steering')">Steering Committee Updates</button>
+</div>
+
+<div id="dashboard" class="tab-content active">
+  {dashboard_entries}
+</div>
+
+<div id="steering" class="tab-content">
+  {steering_entries}
+</div>
+
+<script>
+function showTab(id) {{
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  event.target.classList.add('active');
+}}
+</script>
+</body></html>"""
 
 
 # ─── EOD Email ────────────────────────────────────────────────────────────────
@@ -1485,6 +1607,11 @@ def main():
     html = generate_rolling_html(lane1_data, lane2_data)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f: f.write(html)
     log(f"✅ {OUTPUT_FILE} written (L1: {len(lane1_data['valid_meetings'])} · L2: {len(lane2_data['valid_meetings'])} leads)")
+
+    # ── Changelog ──
+    changelog_html = generate_changelog_html()
+    with open("changelog.html", "w", encoding="utf-8") as f: f.write(changelog_html)
+    log("✅ changelog.html written")
 
     # ── Daily snapshot ──
     log("\n═══ Daily Snapshot ═══")
