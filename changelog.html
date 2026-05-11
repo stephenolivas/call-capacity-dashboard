@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Changelog — Call Capacity Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+         background: #faf9f6; color: #333; padding: 2rem; max-width: 800px; margin: 0 auto; }
+  .back { font-size: 0.85rem; color: #1b7a2e; text-decoration: none; display: inline-block; margin-bottom: 1.5rem; }
+  .back:hover { text-decoration: underline; }
+  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.5rem; }
+  .subtitle { font-size: 0.8rem; color: #888; margin-bottom: 1.5rem; }
+  .tabs { display: flex; gap: 0; border-bottom: 2px solid #e0e0e0; margin-bottom: 1.5rem; }
+  .tab { padding: 10px 20px; font-size: 0.85rem; font-weight: 600; cursor: pointer;
+          border: none; background: none; color: #888; border-bottom: 2px solid transparent;
+          margin-bottom: -2px; transition: all 0.15s; }
+  .tab.active { color: #1b7a2e; border-bottom-color: #1b7a2e; }
+  .tab:hover:not(.active) { color: #555; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+  .cl-entry { border-left: 3px solid #1b7a2e; padding: 0.5rem 0 0.5rem 1rem; margin-bottom: 1.2rem; }
+  .cl-date { font-size: 0.75rem; font-weight: 700; color: #1b7a2e; margin-bottom: 0.3rem; }
+  .cl-entry ul { margin: 0; padding-left: 1.2rem; }
+  .cl-entry li { font-size: 0.82rem; line-height: 1.5; color: #444; margin-bottom: 0.15rem; }
+</style>
+</head><body>
+<a href="index.html" class="back">← Back to Dashboard</a>
+<h1>📋 Changelog</h1>
+<p class="subtitle">Last generated: May 11, 2026 at 11:30 AM PDT</p>
+
+<div class="tabs">
+  <button class="tab active" onclick="showTab('dashboard')">Dashboard Changes</button>
+  <button class="tab" onclick="showTab('steering')">Steering Committee Updates</button>
+</div>
+
+<div id="dashboard" class="tab-content active">
+  <div class="cl-entry"><div class="cl-date">2026-05-11 2:00 PM PT</div><ul><li>Added Changelog and Steering Committee Updates pages</li><li>Changelog link added to dashboard header for transparency</li></ul></div><div class="cl-entry"><div class="cl-date">2026-05-09 11:00 AM PT</div><ul><li>EOD email reverted to all-reps data (no lane filter) — subject stays 'EOD Stats {date}'</li><li>Removed Instagram Setter from External funnel list</li></ul></div><div class="cl-entry"><div class="cl-date">2026-05-08 3:00 PM PT</div><ul><li>Dual-lane toggle: Lane 1 / Lane 2 buttons with instant switching</li><li>Dynamic funnels: only rows with ≥1 booked call appear</li><li>Rep Details section with per-rep funnel breakdown and Lead badges</li></ul></div><div class="cl-entry"><div class="cl-date">2026-05-08 10:00 AM PT</div><ul><li>Lane 2 capacity shows '–' and 'N/A' (no capacity tracking for Lane 2)</li><li>Lane toggle buttons styled with dashboard green (#1b7a2e)</li><li>Jason Aaron moved to Lane 2 only</li></ul></div><div class="cl-entry"><div class="cl-date">2026-05-07 4:00 PM PT</div><ul><li>Added Lane 1 rep filter — dashboard counts only Lane 1 leads via Lead Owner field</li><li>Title updated to 'Call Capacity Dashboard' (Lane buttons indicate active view)</li></ul></div><div class="cl-entry"><div class="cl-date">2026-05-07 10:00 AM PT</div><ul><li>Split AK TikTok and Anthony IG into separate funnel rows (1/day each)</li><li>LTF - Quiz Funnel added to External section</li><li>MTD Funnel link updated to mtd-funnel-dashboard</li></ul></div><div class="cl-entry"><div class="cl-date">2026-05-01 9:00 AM PT</div><ul><li>Capacity changed from 57-60/day to 42/day (Mon-Fri) starting 05/01</li><li>Saturday/Sunday capacity set to 0</li></ul></div><div class="cl-entry"><div class="cl-date">2026-04-15 2:00 PM PT</div><ul><li>Migrated from meeting title classification to First Sales Call Booked Date field</li><li>Field-based counting eliminates dedup issues and UTC mismatches</li></ul></div>
+</div>
+
+<div id="steering" class="tab-content">
+  <p style="color:#888;font-style:italic;">No entries yet.</p>
+</div>
+
+<script>
+function showTab(id) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+</body></html>
