@@ -483,12 +483,12 @@ def fetch_meeting_booking_dates(valid_meetings):
         try:
             data = close_get("activity/meeting", {
                 "lead_id": lead_id,
-                "_fields": "lead_id,starts_at,created_at",
                 "_limit": 10,
             })
             for meeting in data.get("data", []):
-                starts_raw = meeting.get("starts_at", "")
-                created_raw = meeting.get("created_at", "")
+                # Close API uses date_created (not created_at) and starts_at for meetings
+                starts_raw = meeting.get("starts_at") or meeting.get("date_start") or ""
+                created_raw = meeting.get("date_created") or meeting.get("created_at") or ""
                 if not starts_raw or not created_raw:
                     continue
                 try:
@@ -504,7 +504,8 @@ def fetch_meeting_booking_dates(valid_meetings):
                     booking_dates[lead_id] = created_date
                     break
         except Exception as e:
-            pass  # Skip failures silently — detail panel is best-effort
+            if i == 0:
+                log(f"   ⚠ Meeting fetch error (first lead): {e}")
 
         if (i + 1) % 50 == 0:
             log(f"   ... {i + 1}/{len(unique_leads)} leads processed")
@@ -919,7 +920,7 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
     for d in dates:
         label = "► TODAY" if d == today else d.strftime("%a").upper()
         ds = d.strftime("%m/%d")
-        date_headers += f'<th class="col-date{tc(d)}" style="cursor:pointer;" onclick="showDayDetail(\'{d.isoformat()}\')">{label}<br>{ds}</th>'
+        date_headers += f'<th class="col-date{tc(d)} day-clickable" title="Click for details" onclick="showDayDetail(\'{d.isoformat()}\')">{label}<br>{ds}</th>'
 
     # Rep Details
     rep_data = data.get("rep_data", {})
@@ -1053,6 +1054,9 @@ def generate_rolling_html(lane1_data, lane2_data, lane1_detail=None, lane2_detai
     """
 
     panel_css = """
+    .day-clickable { cursor:pointer; transition:background 0.15s, transform 0.1s; position:relative; }
+    .day-clickable:hover { background:rgba(27,122,46,0.08); border-radius:4px; }
+    .day-clickable:active { transform:scale(0.97); }
     .day-panel-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.3); z-index:998; }
     .day-panel { display:none; position:fixed; top:0; right:0; width:380px; height:100%; background:#fff; box-shadow:-4px 0 20px rgba(0,0,0,0.15);
                  z-index:999; overflow-y:auto; padding:1.5rem; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
