@@ -117,6 +117,11 @@ ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "archive")
 # Each entry: {"date": "YYYY-MM-DD HH:MM PT", "notes": ["bullet 1", "bullet 2"]}
 
 CHANGELOG_ENTRIES = [
+    {"date": "2026-05-11 4:00 PM PT", "notes": [
+        "Day Detail Panel: click any day column to see funnel %, rep breakdown, and when calls were booked",
+        "Top 4 funnels + 'Other' bucket with visual bar chart in panel",
+        "Calendar Source section placeholder (Calendly integration in progress)",
+    ]},
     {"date": "2026-05-11 2:00 PM PT", "notes": [
         "Added Changelog and Steering Committee Updates pages",
         "Changelog link added to dashboard header for transparency",
@@ -457,6 +462,114 @@ def map_funnel(raw_funnel):
         return raw_funnel
     # Unknown value → uncategorized
     return raw_funnel
+
+
+def fetch_meeting_booking_dates(valid_meetings):
+    """For each lead in valid_meetings, fetch the meeting's created_at (when the booking was made).
+    Returns: {lead_id: {"created_at": date_obj, "starts_at": date_obj}}
+    Uses Close's meeting activity endpoint per-lead.
+    """
+    step_start = time.time()
+    unique_leads = {}
+    for m in valid_meetings:
+        lid = m.get("lead_id")
+        if lid and lid not in unique_leads:
+            unique_leads[lid] = m.get("date")  # The call date
+
+    log(f"   🔍 Fetching meeting booking dates for {len(unique_leads)} leads...")
+    booking_dates = {}  # lead_id → created_at date
+
+    for i, (lead_id, call_date) in enumerate(unique_leads.items()):
+        try:
+            data = close_get("activity/meeting", {
+                "lead_id": lead_id,
+                "_fields": "lead_id,starts_at,created_at",
+                "_limit": 10,
+            })
+            for meeting in data.get("data", []):
+                starts_raw = meeting.get("starts_at", "")
+                created_raw = meeting.get("created_at", "")
+                if not starts_raw or not created_raw:
+                    continue
+                try:
+                    starts_dt = datetime.fromisoformat(starts_raw.replace("Z", "+00:00"))
+                    starts_date = starts_dt.astimezone(PACIFIC).date()
+                    created_dt = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
+                    created_date = created_dt.astimezone(PACIFIC).date()
+                except (ValueError, TypeError):
+                    continue
+
+                # Match meeting to the call date we know about
+                if starts_date == call_date:
+                    booking_dates[lead_id] = created_date
+                    break
+        except Exception as e:
+            pass  # Skip failures silently — detail panel is best-effort
+
+        if (i + 1) % 50 == 0:
+            log(f"   ... {i + 1}/{len(unique_leads)} leads processed")
+
+    log(f"   ✓ Got booking dates for {len(booking_dates)}/{len(unique_leads)} leads [{elapsed_since(step_start)}]")
+    return booking_dates
+
+
+def build_day_detail(valid_meetings, booking_dates, lane_rep_names):
+    """Build per-day detail data for the day detail panel.
+    Returns: {date_iso_str: {total, funnels: [[name, count, pct], ...], booked_on: [[date, count, pct], ...]}}
+    Funnels: top 4 + "Other" bucket. Booked_on: distribution of created_at dates.
+    """
+    from collections import Counter
+
+    by_day = {}
+    for m in valid_meetings:
+        d = m["date"]
+        ds = d.isoformat()
+        if ds not in by_day:
+            by_day[ds] = {"funnels": Counter(), "reps": Counter(), "booked_on": Counter(), "total": 0}
+        by_day[ds]["funnels"][m["funnel"]] += 1
+        rep_name = lane_rep_names.get(m.get("lead_owner", ""), "Other")
+        by_day[ds]["reps"][rep_name] += 1
+        by_day[ds]["total"] += 1
+
+        # Booking date (when the call was scheduled)
+        lid = m.get("lead_id")
+        if lid in booking_dates:
+            booked_date = booking_dates[lid]
+            by_day[ds]["booked_on"][booked_date.isoformat()] += 1
+        else:
+            by_day[ds]["booked_on"]["Unknown"] += 1
+
+    result = {}
+    for ds, data in by_day.items():
+        total = data["total"]
+        if total == 0:
+            continue
+
+        # Funnels: top 4 + Other
+        funnel_sorted = data["funnels"].most_common()
+        if len(funnel_sorted) > 4:
+            top4 = funnel_sorted[:4]
+            other_count = sum(c for _, c in funnel_sorted[4:])
+            funnel_list = [[f, c, round(c / total * 100)] for f, c in top4]
+            funnel_list.append(["Other", other_count, round(other_count / total * 100)])
+        else:
+            funnel_list = [[f, c, round(c / total * 100)] for f, c in funnel_sorted]
+
+        # Reps: sorted by count descending
+        rep_list = [[r, c] for r, c in data["reps"].most_common()]
+
+        # Booked on: sorted by date
+        booked_items = sorted(data["booked_on"].items(), key=lambda x: x[0] if x[0] != "Unknown" else "9999")
+        booked_list = [[d, c, round(c / total * 100)] for d, c in booked_items]
+
+        result[ds] = {
+            "total": total,
+            "funnels": funnel_list,
+            "reps": rep_list,
+            "booked_on": booked_list,
+        }
+
+    return result
 
 
 def build_dashboard_data(field_leads, dates, today=None, lane_reps=None, lane_label=""):
@@ -801,12 +914,12 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
         t = tc(d)
         total_cells += f'<td class="num total-num{t}">{daily[d]["booked"]}</td>'
 
-    # Date headers
+    # Date headers (clickable for detail panel)
     date_headers = ""
     for d in dates:
         label = "► TODAY" if d == today else d.strftime("%a").upper()
         ds = d.strftime("%m/%d")
-        date_headers += f'<th class="col-date{tc(d)}">{label}<br>{ds}</th>'
+        date_headers += f'<th class="col-date{tc(d)}" style="cursor:pointer;" onclick="showDayDetail(\'{d.isoformat()}\')">{label}<br>{ds}</th>'
 
     # Rep Details
     rep_data = data.get("rep_data", {})
@@ -908,7 +1021,7 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
   </div>"""
 
 
-def generate_rolling_html(lane1_data, lane2_data):
+def generate_rolling_html(lane1_data, lane2_data, lane1_detail=None, lane2_detail=None):
     dates = lane1_data["dates"]
     today = lane1_data["today"]
 
@@ -928,6 +1041,9 @@ def generate_rolling_html(lane1_data, lane2_data):
     lane1_content = generate_lane_content(lane1_data, dates, today, daily_goal_map, n_cols, LANE_1_REP_NAMES, LANE_1_LEAD, show_capacity=True)
     lane2_content = generate_lane_content(lane2_data, dates, today, daily_goal_map, n_cols, LANE_2_REP_NAMES, LANE_2_LEAD, show_capacity=False)
 
+    # Embed detail data as JSON for both lanes
+    detail_json = json.dumps({"lane1": lane1_detail or {}, "lane2": lane2_detail or {}})
+
     toggle_css = """
     .lane-toggle { display:flex; gap:8px; margin-bottom:1rem; }
     .lane-btn { padding:10px 24px; font-size:0.95rem; font-weight:700; border:2px solid #1b7a2e;
@@ -936,13 +1052,104 @@ def generate_rolling_html(lane1_data, lane2_data):
     .lane-btn:hover:not(.active) { background:#f0faf0; }
     """
 
-    toggle_js = """
+    panel_css = """
+    .day-panel-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.3); z-index:998; }
+    .day-panel { display:none; position:fixed; top:0; right:0; width:380px; height:100%; background:#fff; box-shadow:-4px 0 20px rgba(0,0,0,0.15);
+                 z-index:999; overflow-y:auto; padding:1.5rem; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
+    .day-panel .dp-close { position:absolute; top:12px; right:16px; font-size:1.2rem; cursor:pointer; color:#888; background:none; border:none; }
+    .day-panel .dp-close:hover { color:#333; }
+    .day-panel .dp-title { font-size:1.1rem; font-weight:700; margin-bottom:0.2rem; }
+    .day-panel .dp-subtitle { font-size:0.75rem; color:#888; margin-bottom:1.2rem; }
+    .day-panel .dp-section { font-size:0.7rem; font-weight:700; color:#1b7a2e; text-transform:uppercase; letter-spacing:0.5px; margin:1.2rem 0 0.5rem; }
+    .day-panel .dp-bar-row { display:flex; align-items:center; margin-bottom:0.4rem; font-size:0.78rem; }
+    .day-panel .dp-bar-label { width:120px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .day-panel .dp-bar-track { flex:1; height:16px; background:#f0f0f0; border-radius:3px; margin:0 8px; overflow:hidden; }
+    .day-panel .dp-bar-fill { height:100%; background:#1b7a2e; border-radius:3px; transition:width 0.3s; }
+    .day-panel .dp-bar-val { width:55px; text-align:right; font-weight:600; font-size:0.72rem; color:#555; }
+    .day-panel .dp-rep-row { display:flex; justify-content:space-between; padding:3px 0; font-size:0.78rem; border-bottom:1px solid #f5f5f5; }
+    .day-panel .dp-rep-name { color:#333; }
+    .day-panel .dp-rep-count { font-weight:600; color:#1b7a2e; }
+    .day-panel .dp-booked-table { width:100%; font-size:0.78rem; border-collapse:collapse; }
+    .day-panel .dp-booked-table td { padding:4px 6px; border-bottom:1px solid #f0f0f0; }
+    .day-panel .dp-booked-table td:first-child { font-weight:600; }
+    .day-panel .dp-booked-table td:last-child { text-align:right; color:#888; }
+    .day-panel .dp-coming-soon { color:#aaa; font-size:0.78rem; font-style:italic; padding:0.5rem 0; }
+    """
+
+    panel_js = """
     <script>
+    var _activeLane = 1;
+    var _dayDetail = """ + detail_json + """;
+
     function showLane(n) {
+      _activeLane = n;
       document.getElementById('lane1').style.display = n===1 ? 'block' : 'none';
       document.getElementById('lane2').style.display = n===2 ? 'block' : 'none';
       document.getElementById('btn1').className = 'lane-btn' + (n===1 ? ' active' : '');
       document.getElementById('btn2').className = 'lane-btn' + (n===2 ? ' active' : '');
+      closeDayPanel();
+    }
+
+    function showDayDetail(dateStr) {
+      var laneKey = _activeLane === 1 ? 'lane1' : 'lane2';
+      var detail = _dayDetail[laneKey][dateStr];
+      if (!detail || detail.total === 0) return;
+
+      var panel = document.getElementById('dayPanel');
+      var overlay = document.getElementById('dayOverlay');
+
+      // Title
+      var d = new Date(dateStr + 'T12:00:00');
+      var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+      var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      panel.querySelector('.dp-title').textContent = days[d.getDay()] + ', ' + months[d.getMonth()] + ' ' + d.getDate();
+      panel.querySelector('.dp-subtitle').textContent = detail.total + ' calls · Lane ' + _activeLane;
+
+      // Funnels
+      var funnelHtml = '';
+      var maxPct = Math.max.apply(null, detail.funnels.map(function(f){return f[2]}));
+      detail.funnels.forEach(function(f) {
+        var barW = maxPct > 0 ? (f[2] / maxPct * 100) : 0;
+        funnelHtml += '<div class="dp-bar-row">' +
+          '<span class="dp-bar-label">' + f[0] + '</span>' +
+          '<div class="dp-bar-track"><div class="dp-bar-fill" style="width:' + barW + '%"></div></div>' +
+          '<span class="dp-bar-val">' + f[1] + ' (' + f[2] + '%)</span></div>';
+      });
+      document.getElementById('dpFunnels').innerHTML = funnelHtml;
+
+      // Reps
+      var repHtml = '';
+      if (detail.reps) {
+        detail.reps.forEach(function(r) {
+          repHtml += '<div class="dp-rep-row"><span class="dp-rep-name">' + r[0] + '</span><span class="dp-rep-count">' + r[1] + '</span></div>';
+        });
+      }
+      document.getElementById('dpReps').innerHTML = repHtml;
+
+      // Booked on
+      var bookedHtml = '<table class="dp-booked-table">';
+      if (detail.booked_on && detail.booked_on.length > 0) {
+        detail.booked_on.forEach(function(b) {
+          var label = b[0];
+          if (label !== 'Unknown') {
+            var bd = new Date(label + 'T12:00:00');
+            label = days[bd.getDay()] + ' ' + (bd.getMonth()+1) + '/' + bd.getDate();
+          }
+          bookedHtml += '<tr><td>' + label + '</td><td>' + b[1] + ' calls</td><td>' + b[2] + '%</td></tr>';
+        });
+      } else {
+        bookedHtml += '<tr><td colspan="3" style="color:#aaa;">No booking date data</td></tr>';
+      }
+      bookedHtml += '</table>';
+      document.getElementById('dpBooked').innerHTML = bookedHtml;
+
+      panel.style.display = 'block';
+      overlay.style.display = 'block';
+    }
+
+    function closeDayPanel() {
+      document.getElementById('dayPanel').style.display = 'none';
+      document.getElementById('dayOverlay').style.display = 'none';
     }
     </script>
     """
@@ -953,6 +1160,7 @@ def generate_rolling_html(lane1_data, lane2_data):
 <title>Call Capacity Dashboard</title>
 <style>{COMMON_CSS}
 {toggle_css}
+{panel_css}
 </style>
 </head><body>
 {html_header_bar("Call Capacity Dashboard", f"4-Day Trailing + 10-Day Lookahead · First Meetings Only · {wd} working days in {now_pacific.strftime('%B')}", last_updated_date, "Last updated: " + last_updated + ' · <a href="changelog.html" style="color:#fff;opacity:0.7;text-decoration:none;font-weight:400;">📋 Changelog</a>')}
@@ -976,7 +1184,28 @@ def generate_rolling_html(lane1_data, lane2_data):
     <a href="https://stephenolivas.github.io/mtd-funnel-dashboard/" target="_blank">📊 MTD Funnel Reporting →</a>
   </div>
 </div>
-{toggle_js}
+
+<!-- Day Detail Panel -->
+<div id="dayOverlay" class="day-panel-overlay" onclick="closeDayPanel()"></div>
+<div id="dayPanel" class="day-panel">
+  <button class="dp-close" onclick="closeDayPanel()">✕</button>
+  <div class="dp-title"></div>
+  <div class="dp-subtitle"></div>
+
+  <div class="dp-section">Funnel Breakdown</div>
+  <div id="dpFunnels"></div>
+
+  <div class="dp-section">Rep Breakdown</div>
+  <div id="dpReps"></div>
+
+  <div class="dp-section">Calendar Source</div>
+  <div class="dp-coming-soon">Coming soon — Calendly integration in progress</div>
+
+  <div class="dp-section">When Booked</div>
+  <div id="dpBooked"></div>
+</div>
+
+{panel_js}
 </body></html>"""
 
 
@@ -1603,7 +1832,16 @@ def main():
     log("\n── All Reps (EOD email) ──")
     rolling_data = build_dashboard_data(field_leads, rolling_dates, today=today, lane_reps=None, lane_label="All Reps")
 
-    html = generate_rolling_html(lane1_data, lane2_data)
+    # ── Day Detail Panel data ──
+    log("\n═══ Day Detail Panel ═══")
+    log("── Lane 1 meeting booking dates ──")
+    l1_booking = fetch_meeting_booking_dates(lane1_data["valid_meetings"])
+    l1_detail = build_day_detail(lane1_data["valid_meetings"], l1_booking, LANE_1_REP_NAMES)
+    log("── Lane 2 meeting booking dates ──")
+    l2_booking = fetch_meeting_booking_dates(lane2_data["valid_meetings"])
+    l2_detail = build_day_detail(lane2_data["valid_meetings"], l2_booking, LANE_2_REP_NAMES)
+
+    html = generate_rolling_html(lane1_data, lane2_data, lane1_detail=l1_detail, lane2_detail=l2_detail)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f: f.write(html)
     log(f"✅ {OUTPUT_FILE} written (L1: {len(lane1_data['valid_meetings'])} · L2: {len(lane2_data['valid_meetings'])} leads)")
 
