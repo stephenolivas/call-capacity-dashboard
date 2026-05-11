@@ -26,6 +26,7 @@ jobs:
       - name: Run dashboard update
         env:
           CLOSE_API_KEY:      ${{ secrets.CLOSE_API_KEY }}
+          CALENDLY_API_KEY:   ${{ secrets.CALENDLY_API_KEY }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           EMAIL_FROM:         ${{ secrets.EMAIL_FROM }}
           EMAIL_TO:           ${{ secrets.EMAIL_TO }}
@@ -36,6 +37,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add index.html archive.html archive/ changelog.html
+          git add index.html archive.html archive/ changelog.html capacity_cache.json
           git diff --cached --quiet || git commit -m "📊 Update dashboard $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           git push
