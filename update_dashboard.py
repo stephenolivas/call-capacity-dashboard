@@ -260,6 +260,11 @@ ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "archive")
 # Each entry: {"date": "YYYY-MM-DD HH:MM PT", "notes": ["bullet 1", "bullet 2"]}
 
 CHANGELOG_ENTRIES = [
+    {"date": "2026-05-11 6:00 PM PT", "notes": [
+        "Calendly integration live: Calendar Availability, Open Availability, and Calendar Capacity now use real calendar data",
+        "Queries team calendars (Vendingprenuers Consultation + Vending Accelerator Call) for actual available slots",
+        "Day detail panel Calendar Source shows event name breakdown from Close meeting data",
+    ]},
     {"date": "2026-05-11 4:00 PM PT", "notes": [
         "Day Detail Panel: click any day column to see funnel %, rep breakdown, and when calls were booked",
         "Top 4 funnels + 'Other' bucket with visual bar chart in panel",
@@ -1253,6 +1258,26 @@ def generate_rolling_html(lane1_data, lane2_data, lane1_detail=None, lane2_detai
     n_cols = len(dates)
     wd = working_days_in_month(year, month)
 
+    # Check for recent changelog entry (within current week)
+    recent_alert_html = ""
+    if CHANGELOG_ENTRIES:
+        latest = CHANGELOG_ENTRIES[0]
+        latest_date_str = latest["date"].split(" PT")[0].split(" PM")[0].split(" AM")[0].strip()
+        try:
+            # Parse date like "2026-05-11 6:00"
+            parts = latest["date"].split()
+            latest_date = date.fromisoformat(parts[0])
+        except (ValueError, IndexError):
+            latest_date = None
+        
+        if latest_date and (today - latest_date).days < 7:
+            notes_text = " — ".join(latest["notes"][:2])  # Show first 2 notes
+            recent_alert_html = f"""
+  <div class="new-changes-alert" onclick="window.location.href='changelog.html'">
+    <span class="pulse-dot"></span>
+    <span class="alert-text">New Changes! - {latest['date']} — {latest['notes'][0]}</span>
+  </div>"""
+
     lane1_content = generate_lane_content(lane1_data, dates, today, daily_goal_map, n_cols, LANE_1_REP_NAMES, LANE_1_LEAD, show_capacity=True)
     lane2_content = generate_lane_content(lane2_data, dates, today, daily_goal_map, n_cols, LANE_2_REP_NAMES, LANE_2_LEAD, show_capacity=False)
 
@@ -1265,6 +1290,14 @@ def generate_rolling_html(lane1_data, lane2_data, lane1_detail=None, lane2_detai
                 border-radius:6px; cursor:pointer; transition:all 0.15s; background:#fff; color:#1b7a2e; }
     .lane-btn.active { background:#1b7a2e; color:#fff; }
     .lane-btn:hover:not(.active) { background:#f0faf0; }
+
+    .new-changes-alert { display:flex; align-items:center; gap:8px; background:#1b2e1b; color:#fff;
+                         padding:6px 16px; font-size:0.72rem; cursor:pointer; margin:-0.5rem 0 0; }
+    .new-changes-alert:hover { background:#243d24; }
+    .alert-text { opacity:0.9; }
+    @keyframes pulse { 0%, 100% { opacity:1; transform:scale(1); } 50% { opacity:0.4; transform:scale(0.7); } }
+    .pulse-dot { width:10px; height:10px; border-radius:50%; background:#4ade80; display:inline-block;
+                 animation: pulse 1.5s ease-in-out infinite; flex-shrink:0; }
     """
 
     panel_css = """
@@ -1395,6 +1428,7 @@ def generate_rolling_html(lane1_data, lane2_data, lane1_detail=None, lane2_detai
 </style>
 </head><body>
 {html_header_bar("Call Capacity Dashboard", f"4-Day Trailing + 10-Day Lookahead · First Meetings Only · {wd} working days in {now_pacific.strftime('%B')}", last_updated_date, "Last updated: " + last_updated + ' · <a href="changelog.html" style="color:#fff;opacity:0.7;text-decoration:none;font-weight:400;">📋 Changelog</a>')}
+{recent_alert_html}
 <div class="wrap">
 
   <div class="lane-toggle">
