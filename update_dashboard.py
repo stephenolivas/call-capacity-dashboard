@@ -74,49 +74,66 @@ def fetch_calendly_available_slots(dates):
 
     log("📅 Fetching Calendly available slots (team calendars)...")
     now_utc = datetime.utcnow()
+    now_pacific = datetime.now(PACIFIC)
+    today_pacific = now_pacific.date()
     result = {}
 
     for d in dates:
-        # For today, use current time as start (can't query past times)
-        if d == now_utc.date():
-            start = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+        # For today, use current UTC time as start (can't query past times)
+        if d == today_pacific:
+            # Use current UTC time + 1 min buffer to ensure "in the future"
+            buffer_time = now_utc + timedelta(minutes=1)
+            start = buffer_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+            is_today = True
         else:
             start = f"{d.isoformat()}T00:00:00Z"
+            is_today = False
         end = f"{d.isoformat()}T23:59:59Z"
 
         # Try Consultation first (shorter window, primary calendar)
         consult_count = 0
+        consult_error = None
         try:
             data = calendly_get(
                 f"{CALENDLY_API_BASE}/event_type_available_times",
                 {"event_type": CALENDLY_CONSULTATION_URI, "start_time": start, "end_time": end}
             )
             consult_count = len(data.get("collection", []))
-        except:
-            pass
+        except Exception as e:
+            consult_error = str(e)[:200]
+
+        if is_today:
+            log(f"   {d.strftime('%a %m/%d')} (TODAY): Consultation={consult_count} (start={start}){' ERR: ' + consult_error if consult_error else ''}")
 
         if consult_count > 0:
             result[d] = consult_count
-            log(f"   {d.strftime('%a %m/%d')}: {consult_count} slots (Consultation)")
+            if not is_today:
+                log(f"   {d.strftime('%a %m/%d')}: {consult_count} slots (Consultation)")
         else:
             # Consultation returned 0 — try Accelerator (longer window)
             accel_count = 0
+            accel_error = None
             try:
                 data = calendly_get(
                     f"{CALENDLY_API_BASE}/event_type_available_times",
                     {"event_type": CALENDLY_ACCELERATOR_URI, "start_time": start, "end_time": end}
                 )
                 accel_count = len(data.get("collection", []))
-            except:
-                pass
+            except Exception as e:
+                accel_error = str(e)[:200]
+
+            if is_today:
+                log(f"   {d.strftime('%a %m/%d')} (TODAY): Accelerator={accel_count}{' ERR: ' + accel_error if accel_error else ''}")
 
             if accel_count > 0:
                 result[d] = accel_count
-                log(f"   {d.strftime('%a %m/%d')}: {accel_count} slots (Accelerator)")
+                if not is_today:
+                    log(f"   {d.strftime('%a %m/%d')}: {accel_count} slots (Accelerator)")
             else:
                 # Both returned 0 — store 0 (no open slots, not "no data")
                 result[d] = 0
-                log(f"   {d.strftime('%a %m/%d')}: 0 slots (no availability)")
+                if not is_today:
+                    log(f"   {d.strftime('%a %m/%d')}: 0 slots (no availability)")
 
     if not result:
         log("   ⚠ No available slots found (may be outside scheduling window)")
