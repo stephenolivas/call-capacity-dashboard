@@ -280,8 +280,8 @@ ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "archive")
 
 CHANGELOG_ENTRIES = [
     {"date": "2026-05-12 2:00 PM PT", "notes": [
-        "Calendar Availability now tracks the MAX across all runs (stable, never decreases as slots expire)",
-        "New row: Booking Window Missed — shows slots that expired without being booked",
+        "Calendar Availability now uses pre-day snapshot (captured the night before, frozen throughout the day)",
+        "New row: Booking Window Missed — shows slots that expired without being booked (today + trailing only)",
         "Added Dubem Adindu to Lane 1 reps",
     ]},
     {"date": "2026-05-11 6:00 PM PT", "notes": [
@@ -2125,17 +2125,19 @@ def main():
     log("\n── Lane 2 ──")
     lane2_data = build_dashboard_data(field_leads, rolling_dates, today=today, lane_reps=LANE_2_REPS, lane_label="Lane 2")
 
-    # ── Calendly Capacity with Max Tracking (Lane 1 only) ──
-    # Tracks the MAXIMUM Calendar Availability (Available + Booked) per day across all runs.
-    # This prevents the number from dropping as slots expire throughout the day.
+    # ── Calendly Capacity with Last-Snapshot Tracking (Lane 1 only) ──
+    # Future days: always update cache with latest Available + Booked snapshot.
+    # Today: use cached value from last night (frozen pre-day snapshot).
+    # Trailing days: use cached value (already frozen).
     log("\n═══ Calendly Available Slots ═══")
-    max_cache = load_capacity_cache()  # {date: max_calendar_availability}
+    max_cache = load_capacity_cache()  # {date: calendar_availability_snapshot}
 
-    # Manual overrides for days before max tracking was live
+    # Manual overrides for days before tracking was live
     if date(2026, 5, 11) not in max_cache or max_cache[date(2026, 5, 11)] != 18:
-        max_cache[date(2026, 5, 11)] = 18   # Monday — observed peak
-    if date(2026, 5, 12) not in max_cache or max_cache[date(2026, 5, 12)] < 30:
-        max_cache[date(2026, 5, 12)] = 30   # Tuesday — observed peak
+        max_cache[date(2026, 5, 11)] = 18   # Monday — observed count
+    if date(2026, 5, 12) not in max_cache or max_cache[date(2026, 5, 12)] != 30:
+        max_cache[date(2026, 5, 12)] = 30   # Tuesday — observed count
+
     forward_dates = [d for d in rolling_dates if d >= today]
     calendly_slots = fetch_calendly_available_slots(forward_dates)
 
@@ -2143,28 +2145,31 @@ def main():
         booked = lane1_data["daily_data"][d]["booked"]
 
         if d in calendly_slots:
-            # Fresh Calendly data — live open slots
             live_available = calendly_slots[d]
             lane1_data["daily_data"][d]["calendly_available"] = live_available
-
-            # Calendar Availability = Available + Booked (total slots that exist)
             current_total = live_available + booked
 
-            # Track the MAX — only increase, never decrease
-            prev_max = max_cache.get(d, 0)
-            new_max = max(prev_max, current_total)
-            max_cache[d] = new_max
-            lane1_data["daily_data"][d]["max_calendar_availability"] = new_max
-
-            if new_max > prev_max:
-                log(f"   {d.strftime('%a %m/%d')}: {live_available} open, {booked} booked → max {new_max} (updated)")
+            if d > today:
+                # Future day: always update with latest snapshot (overwrites previous)
+                max_cache[d] = current_total
+                lane1_data["daily_data"][d]["max_calendar_availability"] = current_total
+                log(f"   {d.strftime('%a %m/%d')}: {live_available} open, {booked} booked → snapshot {current_total}")
             else:
-                log(f"   {d.strftime('%a %m/%d')}: {live_available} open, {booked} booked → max {new_max} (held)")
+                # Today: use cached value from last night (don't update)
+                cached = max_cache.get(d)
+                if cached:
+                    lane1_data["daily_data"][d]["max_calendar_availability"] = cached
+                    log(f"   {d.strftime('%a %m/%d')} (TODAY): {live_available} open, {booked} booked → pre-day snapshot {cached}")
+                else:
+                    # No cache for today (first run ever) — use current as fallback
+                    max_cache[d] = current_total
+                    lane1_data["daily_data"][d]["max_calendar_availability"] = current_total
+                    log(f"   {d.strftime('%a %m/%d')} (TODAY): {live_available} open, {booked} booked → no cache, using {current_total}")
         elif d in max_cache:
-            # Trailing day — use cached max, no live Calendly data
+            # Trailing day — use cached snapshot
             lane1_data["daily_data"][d]["calendly_available"] = 0
             lane1_data["daily_data"][d]["max_calendar_availability"] = max_cache[d]
-            log(f"   {d.strftime('%a %m/%d')}: max {max_cache[d]} (cached), {booked} booked")
+            log(f"   {d.strftime('%a %m/%d')}: snapshot {max_cache[d]} (cached), {booked} booked")
         else:
             # No Calendly data at all — fall back to static
             lane1_data["daily_data"][d]["calendly_available"] = None
