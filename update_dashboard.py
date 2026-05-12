@@ -17,7 +17,7 @@ import json
 import re
 import time
 import calendar
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
 import requests
@@ -73,7 +73,7 @@ def fetch_calendly_available_slots(dates):
         return {}
 
     log("📅 Fetching Calendly available slots (team calendars)...")
-    now_utc = datetime.utcnow()
+    now_utc = datetime.now(timezone.utc)
     now_pacific = datetime.now(PACIFIC)
     today_pacific = now_pacific.date()
     result = {}
@@ -230,6 +230,7 @@ LANE_1_REPS = {
     "user_pKEujUcHJfsEyI5lM6L56aXM2s5nNOU994JRjRSlAdA",  # Chris Wanke
     "user_fYWHvOuCKDuaQxSp6lROlv2rmvZZYq1kzjGvaF7OrAL",  # Jake Skinner
     "user_wHm1vcLde4RExd3vv9UOjnms5Oz8ssXg8600mQuxMPb",  # Christian Hartwell (Lead)
+    "user_1xDZSeOa8omjfxHXD80twTf8OieXfQ6tNCaYbVygtv1",  # Dubem Adindu
 }
 LANE_1_REP_NAMES = {
     "user_7F059xEinVentOEvkRMP77fWZyvwUiTRTUOuhD11J0e": "Robin Perkins",
@@ -238,6 +239,7 @@ LANE_1_REP_NAMES = {
     "user_pKEujUcHJfsEyI5lM6L56aXM2s5nNOU994JRjRSlAdA": "Chris Wanke",
     "user_fYWHvOuCKDuaQxSp6lROlv2rmvZZYq1kzjGvaF7OrAL": "Jake Skinner",
     "user_wHm1vcLde4RExd3vv9UOjnms5Oz8ssXg8600mQuxMPb": "Christian Hartwell",
+    "user_1xDZSeOa8omjfxHXD80twTf8OieXfQ6tNCaYbVygtv1": "Dubem Adindu",
 }
 LANE_1_LEAD = "user_wHm1vcLde4RExd3vv9UOjnms5Oz8ssXg8600mQuxMPb"  # Christian Hartwell
 
