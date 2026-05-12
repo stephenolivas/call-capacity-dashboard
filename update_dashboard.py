@@ -279,6 +279,11 @@ ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "archive")
 # Each entry: {"date": "YYYY-MM-DD HH:MM PT", "notes": ["bullet 1", "bullet 2"]}
 
 CHANGELOG_ENTRIES = [
+    {"date": "2026-05-12 2:00 PM PT", "notes": [
+        "Calendar Availability now tracks the MAX across all runs (stable, never decreases as slots expire)",
+        "New row: Booking Window Missed — shows slots that expired without being booked",
+        "Added Dubem Adindu to Lane 1 reps",
+    ]},
     {"date": "2026-05-11 6:00 PM PT", "notes": [
         "Calendly integration live: Calendar Availability, Open Availability, and Calendar Capacity now use real calendar data",
         "Queries team calendars (Vendingprenuers Consultation + Vending Accelerator Call) for actual available slots",
@@ -1098,41 +1103,47 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
         elif d < today: return " past"
         return ""
 
-    # Capacity metrics (staging: Calendly-driven)
-    cal_avail_r = booked_r = open_r = cap_pct_r = ""
+    # Capacity metrics (staging: Calendly-driven with max tracking)
+    cal_avail_r = booked_r = open_r = missed_r = cap_pct_r = ""
     for d in dates:
         b = daily[d]["booked"]
-        cal_slots = daily[d].get("calendly_available")  # From Calendly, or None
+        cal_slots = daily[d].get("calendly_available")  # Live open slots from Calendly
+        max_total = daily[d].get("max_calendar_availability")  # Max tracked total
         t = tc(d)
 
         if show_capacity:
-            # Calendar Availability = Calendly Available + Booked (total slots)
-            if cal_slots is not None:
-                total_slots = cal_slots + b
-                cal_avail_r += f'<td class="num{t}">{total_slots}</td>'
+            # Calendar Availability = max tracked total (stable number)
+            if max_total is not None and max_total > 0:
+                cal_avail_r += f'<td class="num{t}">{max_total}</td>'
             else:
-                # Fallback to static capacity when no Calendly data
                 c = daily[d]["capacity"]
-                total_slots = c if c > 0 else 0
+                max_total = c if c > 0 else 0
                 cal_avail_r += f'<td class="num{t}">{c if c > 0 else "–"}</td>'
 
             # Booked
             booked_r += f'<td class="num {"booked" if b > 0 else "zero"}{t}">{b}</td>'
 
-            # Open Availability = total_slots - booked
+            # Open Availability = live Calendly slots
             if cal_slots is not None:
-                open_slots = cal_slots
-                open_r += f'<td class="num{t}">{open_slots}</td>'
+                open_r += f'<td class="num{t}">{cal_slots}</td>'
             elif daily[d]["capacity"] > 0:
-                open_slots = daily[d]["capacity"] - b
-                open_r += f'<td class="num{t}">{open_slots}</td>'
+                open_r += f'<td class="num{t}">{daily[d]["capacity"] - b}</td>'
             else:
                 open_r += f'<td class="num{t}">–</td>'
-                total_slots = 0
 
-            # Calendar Capacity = Booked / Calendar Availability
-            if total_slots > 0:
-                cap_pct = b / total_slots * 100
+            # Booking Window Missed = max_total - booked - open
+            if max_total and max_total > 0 and cal_slots is not None:
+                missed = max_total - b - cal_slots
+                if missed > 0:
+                    missed_r += f'<td class="num{t}" style="color:#c0392b;">{missed}</td>'
+                else:
+                    missed_r += f'<td class="num{t}">0</td>'
+            else:
+                missed_r += f'<td class="num{t}">–</td>'
+
+            # Calendar Capacity = Booked / max_total
+            if max_total and max_total > 0:
+                cap_pct = b / max_total * 100
                 cap_pct_r += f'<td class="num {util_class(cap_pct)}{t}">{cap_pct:.1f}%</td>'
             else:
                 cap_pct_r += f'<td class="num{t}">N/A</td>'
@@ -1140,6 +1151,7 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
             cal_avail_r += f'<td class="num{t}">–</td>'
             booked_r += f'<td class="num {"booked" if b > 0 else "zero"}{t}">{b}</td>'
             open_r += f'<td class="num{t}">–</td>'
+            missed_r += f'<td class="num{t}">–</td>'
             cap_pct_r += f'<td class="num{t}">N/A</td>'
 
     # Funnel section rows (dynamic — only funnels with >=1 call)
@@ -1232,6 +1244,7 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
         <tr><td class="metric">Calendar Availability</td>{cal_avail_r}</tr>
         <tr><td class="metric">Booked</td>{booked_r}</tr>
         <tr><td class="metric">Open Availability</td>{open_r}</tr>
+        <tr><td class="metric">Booking Window Missed</td>{missed_r}</tr>
         <tr><td class="metric">Calendar Capacity</td>{cap_pct_r}</tr>
       </tbody>
     </table>
@@ -2112,27 +2125,50 @@ def main():
     log("\n── Lane 2 ──")
     lane2_data = build_dashboard_data(field_leads, rolling_dates, today=today, lane_reps=LANE_2_REPS, lane_label="Lane 2")
 
-    # ── Calendly Available Slots (Lane 1 only) ──
+    # ── Calendly Capacity with Max Tracking (Lane 1 only) ──
+    # Tracks the MAXIMUM Calendar Availability (Available + Booked) per day across all runs.
+    # This prevents the number from dropping as slots expire throughout the day.
     log("\n═══ Calendly Available Slots ═══")
-    avail_cache = load_capacity_cache()
+    max_cache = load_capacity_cache()  # {date: max_calendar_availability}
+
+    # Manual overrides for days before max tracking was live
+    max_cache.setdefault(date(2026, 5, 11), 18)   # Monday — observed peak
+    max_cache.setdefault(date(2026, 5, 12), 30)   # Tuesday — observed peak
     forward_dates = [d for d in rolling_dates if d >= today]
     calendly_slots = fetch_calendly_available_slots(forward_dates)
 
     for d in rolling_dates:
-        if d in calendly_slots:
-            # Fresh Calendly data
-            lane1_data["daily_data"][d]["calendly_available"] = calendly_slots[d]
-            avail_cache[d] = calendly_slots[d]
-            log(f"   {d.strftime('%a %m/%d')}: {calendly_slots[d]} available slots (Calendly)")
-        elif d in avail_cache:
-            # Cached from a previous run
-            lane1_data["daily_data"][d]["calendly_available"] = avail_cache[d]
-            log(f"   {d.strftime('%a %m/%d')}: {avail_cache[d]} available slots (cached)")
-        else:
-            # No data — Available Slots will fall back to Capacity Goal - Booked
-            lane1_data["daily_data"][d]["calendly_available"] = None
+        booked = lane1_data["daily_data"][d]["booked"]
 
-    save_capacity_cache(avail_cache)
+        if d in calendly_slots:
+            # Fresh Calendly data — live open slots
+            live_available = calendly_slots[d]
+            lane1_data["daily_data"][d]["calendly_available"] = live_available
+
+            # Calendar Availability = Available + Booked (total slots that exist)
+            current_total = live_available + booked
+
+            # Track the MAX — only increase, never decrease
+            prev_max = max_cache.get(d, 0)
+            new_max = max(prev_max, current_total)
+            max_cache[d] = new_max
+            lane1_data["daily_data"][d]["max_calendar_availability"] = new_max
+
+            if new_max > prev_max:
+                log(f"   {d.strftime('%a %m/%d')}: {live_available} open, {booked} booked → max {new_max} (updated)")
+            else:
+                log(f"   {d.strftime('%a %m/%d')}: {live_available} open, {booked} booked → max {new_max} (held)")
+        elif d in max_cache:
+            # Trailing day — use cached max, no live Calendly data
+            lane1_data["daily_data"][d]["calendly_available"] = 0
+            lane1_data["daily_data"][d]["max_calendar_availability"] = max_cache[d]
+            log(f"   {d.strftime('%a %m/%d')}: max {max_cache[d]} (cached), {booked} booked")
+        else:
+            # No Calendly data at all — fall back to static
+            lane1_data["daily_data"][d]["calendly_available"] = None
+            lane1_data["daily_data"][d]["max_calendar_availability"] = None
+
+    save_capacity_cache(max_cache)
 
     # Build all-reps data for EOD email (no lane filter — counts all sales calls)
     log("\n── All Reps (EOD email) ──")
