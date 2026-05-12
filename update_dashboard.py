@@ -1859,7 +1859,7 @@ def fetch_leads_for_email(lead_ids):
     return cache
 
 
-def build_eod_data(rolling_data, today):
+def build_eod_data(rolling_data, today, lane1_data=None, lane2_data=None):
     """Assemble all data points needed for the EOD email."""
 
     # Meeting counts come from rolling_data already in memory — zero extra API calls
@@ -1867,10 +1867,26 @@ def build_eod_data(rolling_data, today):
     tomorrow       = today + timedelta(days=1)
     tomorrow_count = rolling_data["daily_data"].get(tomorrow, {}).get("booked", 0)
 
+    # Per-lane meeting counts
+    lane1_today = lane1_data["daily_data"].get(today, {}).get("booked", 0) if lane1_data else 0
+    lane1_tomorrow = lane1_data["daily_data"].get(tomorrow, {}).get("booked", 0) if lane1_data else 0
+    lane2_today = lane2_data["daily_data"].get(today, {}).get("booked", 0) if lane2_data else 0
+    lane2_tomorrow = lane2_data["daily_data"].get(tomorrow, {}).get("booked", 0) if lane2_data else 0
+
     # Lead IDs from today's meetings (needed for show rate)
     today_lead_ids = list(set(
         m["lead_id"]
         for m in rolling_data["valid_meetings"]
+        if m["date"] == today and m.get("lead_id")
+    ))
+
+    # Per-lane lead IDs for show rate
+    lane1_lead_ids = list(set(
+        m["lead_id"] for m in (lane1_data["valid_meetings"] if lane1_data else [])
+        if m["date"] == today and m.get("lead_id")
+    ))
+    lane2_lead_ids = list(set(
+        m["lead_id"] for m in (lane2_data["valid_meetings"] if lane2_data else [])
         if m["date"] == today and m.get("lead_id")
     ))
 
@@ -1902,6 +1918,15 @@ def build_eod_data(rolling_data, today):
         if str(email_leads[lid].get(f"custom.{CF_SHOW_UP}", "")).lower() == "yes"
     )
     show_rate = (shown / len(showable_ids) * 100) if showable_ids else 0.0
+
+    # Per-lane show rates
+    def calc_show_rate(lead_ids):
+        s_ids = [lid for lid in lead_ids if email_leads.get(lid) and email_leads[lid].get("status_id") != RESCHEDULE_STATUS_ID]
+        s_shown = sum(1 for lid in s_ids if str(email_leads[lid].get(f"custom.{CF_SHOW_UP}", "")).lower() == "yes")
+        return (s_shown / len(s_ids) * 100) if s_ids else 0.0
+
+    lane1_show_rate = calc_show_rate(lane1_lead_ids)
+    lane2_show_rate = calc_show_rate(lane2_lead_ids)
 
     # ── Revenue ───────────────────────────────────────────────────────────────
     # Close stores opportunity `value` in USD cents — divide by 100.
@@ -1938,6 +1963,12 @@ def build_eod_data(rolling_data, today):
         "revenue":        total_revenue,
         "closer_counts":  closer_counts,
         "icp_lines":      icp_lines,
+        "lane1_today":    lane1_today,
+        "lane1_tomorrow": lane1_tomorrow,
+        "lane1_show_rate": lane1_show_rate,
+        "lane2_today":    lane2_today,
+        "lane2_tomorrow": lane2_tomorrow,
+        "lane2_show_rate": lane2_show_rate,
     }
 
 
@@ -1975,10 +2006,11 @@ def format_eod_email(data):
         f"EOD stats for {date_str}:\n\n"
         f"Revenue: {rev_str}\n"
         f"Deals Closed: {data['deals']}\n"
-        f"Closers: {closers_str}\n"
-        f"Todays new meetings: {data['today_count']}\n"
-        f"Show rate: {data['show_rate']:.0f}%\n"
-        f"New meetings set for tomorrow: {data['tomorrow_count']}\n\n"
+        f"Closers: {closers_str}\n\n"
+        f"                    Lane 1    Lane 2\n"
+        f"New Meetings Today:   {data['lane1_today']:<8}  {data['lane2_today']}\n"
+        f"Show Rate:            {data['lane1_show_rate']:.0f}%{'':<6}{data['lane2_show_rate']:.0f}%\n"
+        f"Meetings Tomorrow:    {data['lane1_tomorrow']:<8}  {data['lane2_tomorrow']}\n\n"
         f"Closed won funnel / ICP:\n{icp_lines_plain}\n"
     )
 
@@ -2017,9 +2049,30 @@ def format_eod_email(data):
             {stat_row("💰 Revenue", rev_str, "#1b7a2e")}
             {stat_row("🤝 Deals Closed", str(data['deals']))}
             {stat_row("👤 Closers", closers_str)}
-            {stat_row("📅 New Meetings Today", str(data['today_count']))}
-            {stat_row("✅ Show Rate", f"{data['show_rate']:.0f}%")}
-            {stat_row("📆 Meetings Set for Tomorrow", str(data['tomorrow_count']))}
+          </table>
+
+          <!-- Lane 1 / Lane 2 Table -->
+          <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px;border-collapse:collapse;">
+            <tr>
+              <td style="width:40%;"></td>
+              <td style="width:30%;text-align:center;background:#1b2e1b;color:#fff;font-size:11px;font-weight:800;letter-spacing:0.1em;padding:8px 12px;border-radius:4px 0 0 0;">Lane 1</td>
+              <td style="width:30%;text-align:center;background:#1b2e1b;color:#fff;font-size:11px;font-weight:800;letter-spacing:0.1em;padding:8px 12px;border-radius:0 4px 0 0;">Lane 2</td>
+            </tr>
+            <tr>
+              <td style="padding:10px 8px;font-size:13px;border-bottom:1px solid #f0f0f0;">📅 New Meetings Today</td>
+              <td style="padding:10px 8px;text-align:center;font-size:15px;font-weight:700;border-bottom:1px solid #f0f0f0;">{data['lane1_today']}</td>
+              <td style="padding:10px 8px;text-align:center;font-size:15px;font-weight:700;border-bottom:1px solid #f0f0f0;">{data['lane2_today']}</td>
+            </tr>
+            <tr>
+              <td style="padding:10px 8px;font-size:13px;border-bottom:1px solid #f0f0f0;">✅ Show Rate</td>
+              <td style="padding:10px 8px;text-align:center;font-size:15px;font-weight:700;border-bottom:1px solid #f0f0f0;">{data['lane1_show_rate']:.0f}%</td>
+              <td style="padding:10px 8px;text-align:center;font-size:15px;font-weight:700;border-bottom:1px solid #f0f0f0;">{data['lane2_show_rate']:.0f}%</td>
+            </tr>
+            <tr>
+              <td style="padding:10px 8px;font-size:13px;">📆 Meetings Set for Tomorrow</td>
+              <td style="padding:10px 8px;text-align:center;font-size:15px;font-weight:700;">{data['lane1_tomorrow']}</td>
+              <td style="padding:10px 8px;text-align:center;font-size:15px;font-weight:700;">{data['lane2_tomorrow']}</td>
+            </tr>
           </table>
         </td></tr>
 
@@ -2048,7 +2101,7 @@ def format_eod_email(data):
     return subject, plain, html
 
 
-def send_eod_email(rolling_data, today, recipients=None):
+def send_eod_email(rolling_data, today, recipients=None, lane1_data=None, lane2_data=None):
     """
     Build and send the EOD email via Gmail SMTP.
     recipients: list of email addresses to send to (defaults to EMAIL_TO).
@@ -2071,7 +2124,7 @@ def send_eod_email(rolling_data, today, recipients=None):
         return
 
     try:
-        data                 = build_eod_data(rolling_data, today)
+        data                 = build_eod_data(rolling_data, today, lane1_data=lane1_data, lane2_data=lane2_data)
         subject, plain, html = format_eod_email(data)
 
         log(f"   Sending: '{subject}' → {recipients}")
@@ -2245,12 +2298,12 @@ def main():
     # run_weekday < 5 ensures M-F only (0=Mon ... 4=Fri, 5=Sat, 6=Sun).
     force_email = os.environ.get("FORCE_EOD_EMAIL", "").lower() == "true"
     if (run_hour == 20 and run_weekday < 5 and run_minute < 15) or force_email:
-        send_eod_email(rolling_data, today, EMAIL_TO)
+        send_eod_email(rolling_data, today, EMAIL_TO, lane1_data=lane1_data, lane2_data=lane2_data)
 
     # ── Friday 4pm PT — send to Joe only ──
     if run_hour == 16 and run_weekday == 4 and run_minute < 15:
         log("\n═══ Friday 4pm Email (Joe) ═══")
-        send_eod_email(rolling_data, today, ["joedysert@modern-amenities.com"])
+        send_eod_email(rolling_data, today, ["joedysert@modern-amenities.com"], lane1_data=lane1_data, lane2_data=lane2_data)
 
     elapsed = time.time() - start_time
     log(f"\n🏁 Done! API calls: {_api_call_count} | Time: {elapsed:.1f}s")
