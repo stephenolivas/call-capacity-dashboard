@@ -1131,8 +1131,8 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
             else:
                 open_r += f'<td class="num{t}">–</td>'
 
-            # Booking Window Missed = max_total - booked - open
-            if max_total and max_total > 0 and cal_slots is not None:
+            # Booking Window Missed = max_total - booked - open (only for today + past)
+            if max_total and max_total > 0 and cal_slots is not None and d <= today:
                 missed = max_total - b - cal_slots
                 if missed > 0:
                     missed_r += f'<td class="num{t}" style="color:#c0392b;">{missed}</td>'
@@ -2132,8 +2132,10 @@ def main():
     max_cache = load_capacity_cache()  # {date: max_calendar_availability}
 
     # Manual overrides for days before max tracking was live
-    max_cache.setdefault(date(2026, 5, 11), 18)   # Monday — observed peak
-    max_cache.setdefault(date(2026, 5, 12), 30)   # Tuesday — observed peak
+    if date(2026, 5, 11) not in max_cache or max_cache[date(2026, 5, 11)] != 18:
+        max_cache[date(2026, 5, 11)] = 18   # Monday — observed peak
+    if date(2026, 5, 12) not in max_cache or max_cache[date(2026, 5, 12)] < 30:
+        max_cache[date(2026, 5, 12)] = 30   # Tuesday — observed peak
     forward_dates = [d for d in rolling_dates if d >= today]
     calendly_slots = fetch_calendly_available_slots(forward_dates)
 
