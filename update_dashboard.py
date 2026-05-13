@@ -2190,6 +2190,8 @@ def main():
         max_cache[date(2026, 5, 11)] = 18   # Monday — observed count
     if date(2026, 5, 12) not in max_cache or max_cache[date(2026, 5, 12)] != 30:
         max_cache[date(2026, 5, 12)] = 30   # Tuesday — observed count
+    if max_cache.get(date(2026, 5, 13)) != 34:
+        max_cache[date(2026, 5, 13)] = 34   # Wednesday — adjusted for Dubem mid-day add
 
     forward_dates = [d for d in rolling_dates if d >= today]
     calendly_slots = fetch_calendly_available_slots(forward_dates)
