@@ -253,6 +253,7 @@ LANE_2_REPS = {
     "user_5pAfnzGONQLUVLKqFQVpQ3570YV1gurVCTp1MMgfCDL",  # John Kirk
     "user_UpJb11fzX2TuFHf7fFyWpfXr84lg2Ui7i7p5CtQkIaW",  # Cameron Caswell
     "user_MrBLkl5wCqTm7QxHxPo2ydNV5KxMllg6YZDVc12Aqzj",  # Jason Aaron (Lead)
+    "user_pKEujUcHJfsEyI5lM6L56aXM2s5nNOU994JRjRSlAdA",  # Chris Wanke → "LTF Quiz Calendar - General" (from 05/18)
 }
 LANE_2_REP_NAMES = {
     "user_ulI4pdlkBQGJpFBjSfdf3U2deAXQATVPSAurnbL80T9": "Bryan Barcus",
@@ -263,8 +264,20 @@ LANE_2_REP_NAMES = {
     "user_5pAfnzGONQLUVLKqFQVpQ3570YV1gurVCTp1MMgfCDL": "John Kirk",
     "user_UpJb11fzX2TuFHf7fFyWpfXr84lg2Ui7i7p5CtQkIaW": "Cameron Caswell",
     "user_MrBLkl5wCqTm7QxHxPo2ydNV5KxMllg6YZDVc12Aqzj": "Jason Aaron",
+    "user_pKEujUcHJfsEyI5lM6L56aXM2s5nNOU994JRjRSlAdA": "LTF Quiz Calendar - General",
 }
 LANE_2_LEAD = "user_MrBLkl5wCqTm7QxHxPo2ydNV5KxMllg6YZDVc12Aqzj"  # Jason Aaron
+
+# ── Date-Based Lane Transitions ──────────────────────────────────────────────
+# Chris Wanke moves from Lane 1 to Lane 2 for calls booked on 05/18+
+# He appears in BOTH lane sets; the date-based filter handles which lane counts him.
+LANE_TRANSITIONS = {
+    "user_pKEujUcHJfsEyI5lM6L56aXM2s5nNOU994JRjRSlAdA": {  # Chris Wanke
+        "cutover": date(2026, 5, 18),
+        "from_lane": "Lane 1",
+        "to_lane": "Lane 2",
+    },
+}
 
 # Lead statuses excluded from capacity count (matches rep scorecard methodology)
 EXCLUDED_LEAD_STATUS_IDS = {
@@ -835,6 +848,17 @@ def build_dashboard_data(field_leads, dates, today=None, lane_reps=None, lane_la
 
         if field_date not in daily_data:
             continue
+
+        # Date-based lane transitions (e.g., Chris Wanke → Lane 2 from 05/18)
+        if lane_reps and lead_owner in LANE_TRANSITIONS:
+            trans = LANE_TRANSITIONS[lead_owner]
+            cutover = trans["cutover"]
+            if field_date >= cutover and lane_label == trans["from_lane"]:
+                lane_excluded += 1
+                continue  # This call belongs to the other lane now
+            if field_date < cutover and lane_label == trans["to_lane"]:
+                lane_excluded += 1
+                continue  # This call still belongs to the original lane
 
         # Get funnel
         raw_funnel = (lead.get(FIELD_FUNNEL_NAME_DEAL) or "")
