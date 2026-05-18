@@ -2292,6 +2292,10 @@ def main():
         wd = [pm + timedelta(days=i) for i in range(7)]
         w_leads = fetch_field_leads(pm, ps + timedelta(days=1))
         wdata = build_dashboard_data(w_leads, wd, lane_reps=LANE_1_REPS, lane_label="Lane 1")
+        # Apply Calendly capacity from cache to archive
+        for d in wd:
+            if d in max_cache:
+                wdata["daily_data"][d]["capacity"] = max_cache[d]
         wh = generate_weekly_html(wdata, pm)
         wp = f"{ARCHIVE_DIR}/week-{pm.isoformat()}.html"
         with open(wp, "w", encoding="utf-8") as f: f.write(wh)
@@ -2306,6 +2310,10 @@ def main():
         nd = (pme - pms).days + 1; md = [pms + timedelta(days=i) for i in range(nd)]
         m_leads = fetch_field_leads(pms, today)
         mdata = build_dashboard_data(m_leads, md, lane_reps=LANE_1_REPS, lane_label="Lane 1")
+        # Apply Calendly capacity from cache to archive
+        for d in md:
+            if d in max_cache:
+                mdata["daily_data"][d]["capacity"] = max_cache[d]
         mh = generate_monthly_html(mdata, pms)
         mp = f"{ARCHIVE_DIR}/month-{pms.strftime('%Y-%m')}.html"
         with open(mp, "w", encoding="utf-8") as f: f.write(mh)
