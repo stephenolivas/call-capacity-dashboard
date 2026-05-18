@@ -292,6 +292,11 @@ ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "archive")
 # Each entry: {"date": "YYYY-MM-DD HH:MM PT", "notes": ["bullet 1", "bullet 2"]}
 
 CHANGELOG_ENTRIES = [
+    {"date": "2026-05-18 2:00 PM PT", "notes": [
+        "New row: Capacity Target — 42 meetings Mon-Fri, the daily count we need to hit revenue goals",
+        "Renamed 'Calendar Capacity' to 'Capacity to Target %' — now measures Booked vs. Capacity Target (42) instead of Booked vs. Calendar Availability",
+        "Weekends show '–' for Capacity Target and 'N/A' for Capacity to Target %",
+    ]},
     {"date": "2026-05-12 2:00 PM PT", "notes": [
         "Calendar Availability now uses pre-day snapshot (captured the night before, frozen throughout the day)",
         "New row: Booking Window Missed — shows slots that expired without being booked (today + trailing only)",
@@ -1128,14 +1133,23 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
         return ""
 
     # Capacity metrics (staging: Calendly-driven with max tracking)
-    cal_avail_r = booked_r = open_r = missed_r = cap_pct_r = ""
+    target_r = cal_avail_r = booked_r = open_r = missed_r = cap_pct_r = ""
+    CAPACITY_TARGET = 42  # Daily target Mon-Fri to meet revenue goals
     for d in dates:
         b = daily[d]["booked"]
         cal_slots = daily[d].get("calendly_available")  # Live open slots from Calendly
         max_total = daily[d].get("max_calendar_availability")  # Max tracked total
         t = tc(d)
+        is_weekday = d.weekday() < 5  # Mon-Fri = 0-4
+        day_target = CAPACITY_TARGET if is_weekday else None
 
         if show_capacity:
+            # Capacity Target = 42 on weekdays, – on weekends
+            if day_target is not None:
+                target_r += f'<td class="num{t}">{day_target}</td>'
+            else:
+                target_r += f'<td class="num{t}">–</td>'
+
             # Calendar Availability = max tracked total (stable number)
             if max_total is not None and max_total > 0:
                 cal_avail_r += f'<td class="num{t}">{max_total}</td>'
@@ -1165,13 +1179,14 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
             else:
                 missed_r += f'<td class="num{t}">–</td>'
 
-            # Calendar Capacity = Booked / max_total
-            if max_total and max_total > 0:
-                cap_pct = b / max_total * 100
+            # Capacity to Target % = Booked / Capacity Target (no cap, weekends N/A)
+            if day_target is not None:
+                cap_pct = b / day_target * 100
                 cap_pct_r += f'<td class="num {util_class(cap_pct)}{t}">{cap_pct:.1f}%</td>'
             else:
                 cap_pct_r += f'<td class="num{t}">N/A</td>'
         else:
+            target_r += f'<td class="num{t}">–</td>'
             cal_avail_r += f'<td class="num{t}">–</td>'
             booked_r += f'<td class="num {"booked" if b > 0 else "zero"}{t}">{b}</td>'
             open_r += f'<td class="num{t}">–</td>'
@@ -1265,11 +1280,12 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
     <table><colgroup><col style="width:200px"><col span="{n_cols}"></colgroup>
       <thead><tr><th></th>{date_headers}</tr></thead>
       <tbody>
+        <tr><td class="metric">Capacity Target</td>{target_r}</tr>
         <tr><td class="metric">Calendar Availability</td>{cal_avail_r}</tr>
         <tr><td class="metric">Booked</td>{booked_r}</tr>
         <tr><td class="metric">Open Availability</td>{open_r}</tr>
         <tr><td class="metric">Booking Window Missed</td>{missed_r}</tr>
-        <tr><td class="metric">Calendar Capacity</td>{cap_pct_r}</tr>
+        <tr><td class="metric">Capacity to Target %</td>{cap_pct_r}</tr>
       </tbody>
     </table>
   </div>
