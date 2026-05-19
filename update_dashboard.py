@@ -991,6 +991,9 @@ td.past { background: #fafafa !important; }
 .util-low { color: #16a34a; font-weight: 700; }
 .util-mid { color: #b45309; font-weight: 700; }
 .util-high { color: #dc2626; font-weight: 700; }
+td.util-low { color: #16a34a; font-weight: 700; }
+td.util-mid { color: #b45309; font-weight: 700; }
+td.util-high { color: #dc2626; font-weight: 700; }
 tr.total-row td { border-top: 2px solid #bbb; }
 tr.section-divider td { border-top: 2px solid #d4d4d4; padding: 0; height: 0; }
 tr.section-label-row td { font-size: 0.62rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; padding: 0.5rem 0.6rem 0.25rem; border-bottom: 1px solid #d4d4d4; }
