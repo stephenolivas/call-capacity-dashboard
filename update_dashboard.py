@@ -294,7 +294,8 @@ ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "archive")
 CHANGELOG_ENTRIES = [
     {"date": "2026-05-18 2:00 PM PT", "notes": [
         "New row: Capacity Target — 42 meetings Mon-Fri, the daily count we need to hit revenue goals",
-        "Renamed 'Calendar Capacity' to 'Capacity to Target %' — now measures Booked vs. Capacity Target (42) instead of Booked vs. Calendar Availability",
+        "New row: Capacity to Target % — Booked vs. Capacity Target (42), styled as the summary row at the bottom of the block. Red <75%, amber 75-89%, green ≥90%",
+        "Kept Calendar Capacity % — still shows Booked vs. Calendar Availability for capacity-fullness signal",
         "Weekends show '–' for Capacity Target and 'N/A' for Capacity to Target %",
     ]},
     {"date": "2026-05-12 2:00 PM PT", "notes": [
@@ -1036,6 +1037,13 @@ def util_class(pct):
     return "util-low"
 
 
+def target_class(pct):
+    """Color for Capacity to Target %: red <75, amber 75-89, green >=90."""
+    if pct >= 90: return "util-low"    # green
+    if pct >= 75: return "util-mid"    # amber
+    return "util-high"                  # red
+
+
 # ─── Funnel Row Builder ─────────────────────────────────────────────────────
 
 def build_funnel_rows(data, dates, today, daily_goal_map, section_filter):
@@ -1133,7 +1141,7 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
         return ""
 
     # Capacity metrics (staging: Calendly-driven with max tracking)
-    target_r = cal_avail_r = booked_r = open_r = missed_r = cap_pct_r = ""
+    target_r = cal_avail_r = booked_r = open_r = missed_r = cal_cap_pct_r = cap_pct_r = ""
     CAPACITY_TARGET = 42  # Daily target Mon-Fri to meet revenue goals
     for d in dates:
         b = daily[d]["booked"]
@@ -1179,19 +1187,27 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
             else:
                 missed_r += f'<td class="num{t}">–</td>'
 
+            # Calendar Capacity % = Booked / Calendar Availability (capacity-fullness signal)
+            if max_total and max_total > 0:
+                cal_cap_pct = b / max_total * 100
+                cal_cap_pct_r += f'<td class="num {util_class(cal_cap_pct)}{t}">{cal_cap_pct:.1f}%</td>'
+            else:
+                cal_cap_pct_r += f'<td class="num{t}">N/A</td>'
+
             # Capacity to Target % = Booked / Capacity Target (no cap, weekends N/A)
             if day_target is not None:
                 cap_pct = b / day_target * 100
-                cap_pct_r += f'<td class="num {util_class(cap_pct)}{t}">{cap_pct:.1f}%</td>'
+                cap_pct_r += f'<td class="num total-num {target_class(cap_pct)}{t}">{cap_pct:.1f}%</td>'
             else:
-                cap_pct_r += f'<td class="num{t}">N/A</td>'
+                cap_pct_r += f'<td class="num total-num{t}">N/A</td>'
         else:
             target_r += f'<td class="num{t}">–</td>'
             cal_avail_r += f'<td class="num{t}">–</td>'
             booked_r += f'<td class="num {"booked" if b > 0 else "zero"}{t}">{b}</td>'
             open_r += f'<td class="num{t}">–</td>'
             missed_r += f'<td class="num{t}">–</td>'
-            cap_pct_r += f'<td class="num{t}">N/A</td>'
+            cal_cap_pct_r += f'<td class="num{t}">N/A</td>'
+            cap_pct_r += f'<td class="num total-num{t}">N/A</td>'
 
     # Funnel section rows (dynamic — only funnels with >=1 call)
     ext_rows = build_funnel_rows(data, dates, today, daily_goal_map, "external")
@@ -1285,7 +1301,8 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
         <tr><td class="metric">Booked</td>{booked_r}</tr>
         <tr><td class="metric">Open Availability</td>{open_r}</tr>
         <tr><td class="metric">Booking Window Missed</td>{missed_r}</tr>
-        <tr><td class="metric">Capacity to Target %</td>{cap_pct_r}</tr>
+        <tr><td class="metric">Calendar Capacity %</td>{cal_cap_pct_r}</tr>
+        <tr class="total-row"><td class="metric">Capacity to Target %</td>{cap_pct_r}</tr>
       </tbody>
     </table>
   </div>
