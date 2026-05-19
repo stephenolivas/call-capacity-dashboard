@@ -1365,22 +1365,22 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
             rep_rows += f'<tr><td class="metric" style="padding-left:1.2rem;font-size:0.72rem;color:#555;">{funnel}</td>{funnel_cells}</tr>\n'
 
         # Total Calls row — all non-internal meetings (first calls + follow-ups + reschedules + Q&A etc.)
-        # Informational only — no color signaling.
+        # Informational only — rendered in muted gray.
         total_calls_cells = ""
         for d in dates:
             t = tc(d)
             total_count = rep_total_by_date.get(d, 0)
             if total_count > 0:
-                total_calls_cells += f'<td class="num{t}">{total_count}</td>'
+                total_calls_cells += f'<td class="num{t}" style="color:#777;">{total_count}</td>'
             else:
                 total_calls_cells += f'<td class="num zero{t}">0</td>'
         rep_rows += (
             '<tr>'
-            '<td class="metric" style="padding-left:1.2rem;font-size:0.72rem;color:#1a1a1a;'
+            '<td class="metric" style="padding-left:1.2rem;font-size:0.72rem;color:#777;'
             'font-weight:600;border-top:1px solid #ececec;" '
             'title="All non-internal meetings on the calendar (first calls + follow-ups + reschedules). '
             'Informational — compare against the rep header above to spot mis-titled meetings.">'
-            'Total Calls</td>'
+            "Total Calls (Inc. F/Us, Resch., etc.)</td>"
             f'{total_calls_cells}</tr>\n'
         )
 
