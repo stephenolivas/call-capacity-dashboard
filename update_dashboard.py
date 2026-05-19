@@ -991,9 +991,9 @@ td.past { background: #fafafa !important; }
 .util-low { color: #16a34a; font-weight: 700; }
 .util-mid { color: #b45309; font-weight: 700; }
 .util-high { color: #dc2626; font-weight: 700; }
-td.util-low { color: #16a34a; font-weight: 700; }
-td.util-mid { color: #b45309; font-weight: 700; }
-td.util-high { color: #dc2626; font-weight: 700; }
+td.tgt-red   { color: #dc2626; font-weight: 700; }
+td.tgt-amber { color: #b45309; font-weight: 700; }
+td.tgt-green { color: #16a34a; font-weight: 700; }
 tr.total-row td { border-top: 2px solid #bbb; }
 tr.section-divider td { border-top: 2px solid #d4d4d4; padding: 0; height: 0; }
 tr.section-label-row td { font-size: 0.62rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; padding: 0.5rem 0.6rem 0.25rem; border-bottom: 1px solid #d4d4d4; }
@@ -1042,9 +1042,9 @@ def util_class(pct):
 
 def target_class(pct):
     """Color for Capacity to Target %: red <75, amber 75-89, green >=90."""
-    if pct >= 90: return "util-low"    # green
-    if pct >= 75: return "util-mid"    # amber
-    return "util-high"                  # red
+    if pct >= 90: return "tgt-green"
+    if pct >= 75: return "tgt-amber"
+    return "tgt-red"
 
 
 # ─── Funnel Row Builder ─────────────────────────────────────────────────────
@@ -1190,10 +1190,10 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
             else:
                 missed_r += f'<td class="num{t}">–</td>'
 
-            # Calendar Capacity % = Booked / Calendar Availability (capacity-fullness signal)
+            # Calendar Capacity % = Booked / Calendar Availability (capacity-fullness signal, no color)
             if max_total and max_total > 0:
                 cal_cap_pct = b / max_total * 100
-                cal_cap_pct_r += f'<td class="num {util_class(cal_cap_pct)}{t}">{cal_cap_pct:.1f}%</td>'
+                cal_cap_pct_r += f'<td class="num{t}">{cal_cap_pct:.1f}%</td>'
             else:
                 cal_cap_pct_r += f'<td class="num{t}">N/A</td>'
 
