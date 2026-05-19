@@ -292,6 +292,10 @@ ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "archive")
 # Each entry: {"date": "YYYY-MM-DD HH:MM PT", "notes": ["bullet 1", "bullet 2"]}
 
 CHANGELOG_ENTRIES = [
+    {"date": "2026-05-18 4:30 PM PT", "notes": [
+        "New row in Rep Details: Total Calls — counts ALL meetings on each rep's calendar (first calls + follow-ups + reschedules + Q&A), excluding internal/admin events (lunches, breaks, OOO, 1:1s, etc.). Helps reconcile what the dashboard counts vs. what shows on a sales manager's calendar view.",
+        "Filters: meeting must have a lead attached, not canceled/declined, title must not match admin patterns.",
+    ]},
     {"date": "2026-05-18 2:00 PM PT", "notes": [
         "New row: Capacity Target — 42 meetings Mon-Fri, the daily count we need to hit revenue goals",
         "New row: Capacity to Target % — Booked vs. Capacity Target (42), styled as the summary row at the bottom of the block. Red <75%, amber 75-89%, green ≥90%",
@@ -739,6 +743,91 @@ def fetch_meeting_booking_dates(valid_meetings):
     return booking_dates, meeting_titles
 
 
+def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids):
+    """Fetch total non-internal meetings per rep per date in the window.
+
+    Counts ALL meetings (first calls + follow-ups + reschedules + Q&A + onboarding etc.)
+    so the rep details section can surface the gap between "what's on the calendar"
+    and "what the dashboard counts as first sales calls."
+
+    EXCLUDES:
+      - Meetings without a lead_id attached (internal team events, lunches, etc.)
+      - Canceled / declined meetings (wouldn't appear on the live calendar)
+      - Titles matching admin/internal patterns (belt-and-suspenders backup filter)
+
+    Returns: {user_id: {date: count}}
+    """
+    log("📥 Fetching all rep meetings in window for Total Calls row...")
+    step_start = time.time()
+
+    # Server-side date filter — Close ignores unknown params, so if these aren't
+    # honored we just paginate more pages and the client-side date check still works.
+    start_iso = start_date.isoformat()
+    end_iso   = (end_date + timedelta(days=1)).isoformat()
+
+    EXCLUSION_PATTERNS = [
+        "lunch", "break", "ooo", "pto", "out of office",
+        "internal", "team meeting", "1:1", "standup", "training",
+    ]
+    EXCLUDED_STATUSES = {"canceled", "declined"}
+
+    rep_totals = {}  # {user_id: {date: count}}
+    skip = 0
+    pages = 0
+    raw_count = 0
+    kept_count = 0
+    excluded = {"no_lead": 0, "status": 0, "title": 0, "out_of_range": 0, "not_lane_rep": 0}
+
+    while True:
+        data = close_get("activity/meeting", {
+            "date_start__gte": start_iso,
+            "date_start__lt":  end_iso,
+            "_skip":           skip,
+            "_limit":          100,
+        })
+        batch = data.get("data", [])
+        if not batch:
+            break
+        pages += 1
+        raw_count += len(batch)
+
+        for m in batch:
+            meeting_date = parse_meeting_date_pacific(m)
+            if meeting_date is None or meeting_date < start_date or meeting_date > end_date:
+                excluded["out_of_range"] += 1
+                continue
+            user_id = m.get("user_id")
+            if user_id not in all_lane_user_ids:
+                excluded["not_lane_rep"] += 1
+                continue
+            if not m.get("lead_id"):
+                excluded["no_lead"] += 1
+                continue
+            status = (m.get("status") or "").lower()
+            if status in EXCLUDED_STATUSES:
+                excluded["status"] += 1
+                continue
+            title = (m.get("title") or "").lower()
+            if any(p in title for p in EXCLUSION_PATTERNS):
+                excluded["title"] += 1
+                continue
+
+            rep_totals.setdefault(user_id, {}).setdefault(meeting_date, 0)
+            rep_totals[user_id][meeting_date] += 1
+            kept_count += 1
+
+        if not data.get("has_more", False):
+            break
+        skip += 100
+
+    log(f"   ✓ {kept_count} meetings kept across {len(rep_totals)} reps "
+        f"({raw_count} raw, {pages} pages) [{elapsed_since(step_start)}]")
+    log(f"   ↪ Excluded: {excluded['no_lead']} no lead · {excluded['status']} canceled/declined · "
+        f"{excluded['title']} admin titles · {excluded['out_of_range']} out of window · "
+        f"{excluded['not_lane_rep']} not on a lane")
+    return rep_totals
+
+
 def build_day_detail(valid_meetings, booking_dates, lane_rep_names, meeting_titles=None):
     """Build per-day detail data for the day detail panel.
     meeting_titles: {lead_id: str} — meeting title from Close for Calendar Source
@@ -810,11 +899,13 @@ def build_day_detail(valid_meetings, booking_dates, lane_rep_names, meeting_titl
     return result
 
 
-def build_dashboard_data(field_leads, dates, today=None, lane_reps=None, lane_label=""):
+def build_dashboard_data(field_leads, dates, today=None, lane_reps=None, lane_label="", rep_total_meetings=None):
     """Build dashboard data from field-based lead query.
     field_leads: list of lead dicts from fetch_field_leads (or similar).
     lane_reps: set of user IDs to filter by (if None, no lane filter applied).
     lane_label: label for logging (e.g., "Lane 1", "Lane 2").
+    rep_total_meetings: optional {user_id: {date: count}} from fetch_rep_total_meetings()
+                        for the "Total Calls" reconciliation row in rep details.
     """
     daily_data = {}
     all_funnels_seen = set()
@@ -899,6 +990,7 @@ def build_dashboard_data(field_leads, dates, today=None, lane_reps=None, lane_la
         "valid_meetings": valid_meetings,
         "today": today,
         "rep_data": rep_data,
+        "rep_total_meetings": rep_total_meetings or {},
     }
 
 
@@ -1232,6 +1324,7 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
 
     # Rep Details
     rep_data = data.get("rep_data", {})
+    rep_total_meetings = data.get("rep_total_meetings", {})
     rep_rows = ""
     rep_summary_parts = []
 
@@ -1242,6 +1335,7 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
         rep_name = lane_rep_names.get(uid, uid)
         badge = ' <span style="background:#2563eb;color:#fff;font-size:0.6rem;padding:1px 6px;border-radius:3px;margin-left:4px;">Lead</span>' if uid == lane_lead else ""
         day_data = rep_data.get(uid, {})
+        rep_total_by_date = rep_total_meetings.get(uid, {})
 
         rep_funnels = set()
         rep_total = 0
@@ -1269,6 +1363,26 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
                 c = day_data.get(d, {}).get(funnel, 0)
                 funnel_cells += f'<td class="num{t}">{c}</td>' if c > 0 else f'<td class="num zero{t}">0</td>'
             rep_rows += f'<tr><td class="metric" style="padding-left:1.2rem;font-size:0.72rem;color:#555;">{funnel}</td>{funnel_cells}</tr>\n'
+
+        # Total Calls row — all non-internal meetings (first calls + follow-ups + reschedules + Q&A etc.)
+        # Informational only — no color signaling.
+        total_calls_cells = ""
+        for d in dates:
+            t = tc(d)
+            total_count = rep_total_by_date.get(d, 0)
+            if total_count > 0:
+                total_calls_cells += f'<td class="num{t}">{total_count}</td>'
+            else:
+                total_calls_cells += f'<td class="num zero{t}">0</td>'
+        rep_rows += (
+            '<tr>'
+            '<td class="metric" style="padding-left:1.2rem;font-size:0.72rem;color:#1a1a1a;'
+            'font-weight:600;border-top:1px solid #ececec;" '
+            'title="All non-internal meetings on the calendar (first calls + follow-ups + reschedules). '
+            'Informational — compare against the rep header above to spot mis-titled meetings.">'
+            'Total Calls</td>'
+            f'{total_calls_cells}</tr>\n'
+        )
 
     rep_summary = "Rep Details — " + " · ".join(rep_summary_parts) if rep_summary_parts else "Rep Details — No calls"
 
@@ -2233,10 +2347,15 @@ def main():
     rolling_dates = [rolling_start + timedelta(days=i) for i in range(14)]
     field_leads = fetch_field_leads(rolling_start, rolling_end)
 
+    # Fetch total meetings per rep (includes follow-ups, reschedules, Q&A, etc.)
+    # Used for the "Total Calls" reconciliation row in rep details.
+    all_lane_user_ids = LANE_1_REPS | LANE_2_REPS
+    rep_total_meetings = fetch_rep_total_meetings(rolling_start, rolling_end, all_lane_user_ids)
+
     log("\n── Lane 1 ──")
-    lane1_data = build_dashboard_data(field_leads, rolling_dates, today=today, lane_reps=LANE_1_REPS, lane_label="Lane 1")
+    lane1_data = build_dashboard_data(field_leads, rolling_dates, today=today, lane_reps=LANE_1_REPS, lane_label="Lane 1", rep_total_meetings=rep_total_meetings)
     log("\n── Lane 2 ──")
-    lane2_data = build_dashboard_data(field_leads, rolling_dates, today=today, lane_reps=LANE_2_REPS, lane_label="Lane 2")
+    lane2_data = build_dashboard_data(field_leads, rolling_dates, today=today, lane_reps=LANE_2_REPS, lane_label="Lane 2", rep_total_meetings=rep_total_meetings)
 
     # ── Calendly Capacity with Last-Snapshot Tracking (Lane 1 only) ──
     # Future days: always update cache with latest Available + Booked snapshot.
