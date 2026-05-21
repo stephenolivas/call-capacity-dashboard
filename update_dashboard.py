@@ -231,6 +231,7 @@ LANE_1_REPS = {
     "user_fYWHvOuCKDuaQxSp6lROlv2rmvZZYq1kzjGvaF7OrAL",  # Jake Skinner
     "user_wHm1vcLde4RExd3vv9UOjnms5Oz8ssXg8600mQuxMPb",  # Christian Hartwell (Lead)
     "user_1xDZSeOa8omjfxHXD80twTf8OieXfQ6tNCaYbVygtv1",  # Dubem Adindu
+    "user_lUjlATIIgFg8mELa0GFzZUj0lG4Cs7PwQsxbi34I6Su",  # Joe Dysert (overflow — see LANE_FUNNEL_RESTRICTIONS)
 }
 LANE_1_REP_NAMES = {
     "user_7F059xEinVentOEvkRMP77fWZyvwUiTRTUOuhD11J0e": "Robin Perkins",
@@ -240,6 +241,7 @@ LANE_1_REP_NAMES = {
     "user_fYWHvOuCKDuaQxSp6lROlv2rmvZZYq1kzjGvaF7OrAL": "Jake Skinner",
     "user_wHm1vcLde4RExd3vv9UOjnms5Oz8ssXg8600mQuxMPb": "Christian Hartwell",
     "user_1xDZSeOa8omjfxHXD80twTf8OieXfQ6tNCaYbVygtv1": "Dubem Adindu",
+    "user_lUjlATIIgFg8mELa0GFzZUj0lG4Cs7PwQsxbi34I6Su": "Joe Dysert",
 }
 LANE_1_LEAD = "user_wHm1vcLde4RExd3vv9UOjnms5Oz8ssXg8600mQuxMPb"  # Christian Hartwell
 
@@ -279,6 +281,31 @@ LANE_TRANSITIONS = {
     },
 }
 
+# ── Funnel-Restricted Reps ───────────────────────────────────────────────────
+# Reps whose calls only count for specific funnels (and optional date range).
+# Outside the funnel allowlist OR outside the date range = call is excluded.
+# Used for overflow situations where someone takes calls but isn't a permanent lane rep.
+LANE_FUNNEL_RESTRICTIONS = {
+    "user_lUjlATIIgFg8mELa0GFzZUj0lG4Cs7PwQsxbi34I6Su": {  # Joe Dysert
+        "funnels": {"Internal Webinar"},
+        "since": date(2026, 5, 18),  # inclusive
+        "until": date(2026, 5, 24),  # inclusive — overflow for week of 5/18
+    },
+}
+
+def passes_funnel_restriction(user_id, funnel, call_date):
+    """True if the user has no restriction, or if (funnel, date) matches the restriction.
+    Returns False when a restriction exists and the call falls outside it — meaning the
+    call should NOT be counted at all."""
+    r = LANE_FUNNEL_RESTRICTIONS.get(user_id)
+    if not r:
+        return True
+    since = r.get("since")
+    until = r.get("until")
+    if since and call_date < since: return False
+    if until and call_date > until: return False
+    return funnel in r.get("funnels", set())
+
 # Lead statuses excluded from capacity count (matches rep scorecard methodology)
 EXCLUDED_LEAD_STATUS_IDS = {
     "stat_hWIGHjzyNpl4YjIFSFz3VK4fp2ny10SFJLKAihmo4KT",  # Canceled (by Lead)
@@ -292,6 +319,11 @@ ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "archive")
 # Each entry: {"date": "YYYY-MM-DD HH:MM PT", "notes": ["bullet 1", "bullet 2"]}
 
 CHANGELOG_ENTRIES = [
+    {"date": "2026-05-21 11:00 AM PT", "notes": [
+        "Joe Dysert added to Lane 1 as funnel-restricted overflow rep for Internal Webinar calls (week of 05/18–05/24 only)",
+        "His calls only count when Funnel Name DEAL = Internal Webinar; outside the date window his calls don't count at all (he's not a permanent Lane 1 rep)",
+        "New LANE_FUNNEL_RESTRICTIONS config block lets us add similar overflow assignments later without touching downstream logic",
+    ]},
     {"date": "2026-05-18 4:30 PM PT", "notes": [
         "New row in Rep Details: Total Calls — counts ALL meetings on each rep's calendar (first calls + follow-ups + reschedules + Q&A), excluding internal/admin events (lunches, breaks, OOO, 1:1s, etc.). Helps reconcile what the dashboard counts vs. what shows on a sales manager's calendar view.",
         "Filters: meeting must have a lead attached, not canceled/declined, title must not match admin patterns.",
@@ -743,7 +775,7 @@ def fetch_meeting_booking_dates(valid_meetings):
     return booking_dates, meeting_titles
 
 
-def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids):
+def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids, lead_to_funnel=None):
     """Fetch total non-internal meetings per rep per date in the window.
 
     Counts ALL meetings (first calls + follow-ups + reschedules + Q&A + onboarding etc.)
@@ -754,11 +786,17 @@ def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids):
       - Meetings without a lead_id attached (internal team events, lunches, etc.)
       - Canceled / declined meetings (wouldn't appear on the live calendar)
       - Titles matching admin/internal patterns (belt-and-suspenders backup filter)
+      - For funnel-restricted reps (LANE_FUNNEL_RESTRICTIONS): meetings whose lead's funnel
+        doesn't match the rep's allowed funnels for the configured date range.
+
+    lead_to_funnel: {lead_id: funnel_name} for restriction checks. If None or a lead is
+    missing, restricted reps' meetings for that lead are excluded (conservative default).
 
     Returns: {user_id: {date: count}}
     """
     log("📥 Fetching all rep meetings in window for Total Calls row...")
     step_start = time.time()
+    lead_to_funnel = lead_to_funnel or {}
 
     # Server-side date filter — Close ignores unknown params, so if these aren't
     # honored we just paginate more pages and the client-side date check still works.
@@ -776,7 +814,7 @@ def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids):
     pages = 0
     raw_count = 0
     kept_count = 0
-    excluded = {"no_lead": 0, "status": 0, "title": 0, "out_of_range": 0, "not_lane_rep": 0}
+    excluded = {"no_lead": 0, "status": 0, "title": 0, "out_of_range": 0, "not_lane_rep": 0, "funnel_restricted": 0}
 
     while True:
         data = close_get("activity/meeting", {
@@ -800,7 +838,8 @@ def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids):
             if user_id not in all_lane_user_ids:
                 excluded["not_lane_rep"] += 1
                 continue
-            if not m.get("lead_id"):
+            lead_id = m.get("lead_id")
+            if not lead_id:
                 excluded["no_lead"] += 1
                 continue
             status = (m.get("status") or "").lower()
@@ -811,6 +850,14 @@ def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids):
             if any(p in title for p in EXCLUSION_PATTERNS):
                 excluded["title"] += 1
                 continue
+
+            # Funnel-restricted reps: only count meetings whose lead matches the allowed funnel.
+            # If the lead isn't in our field_leads window we can't verify funnel, so we exclude.
+            if user_id in LANE_FUNNEL_RESTRICTIONS:
+                lead_funnel = lead_to_funnel.get(lead_id)
+                if lead_funnel is None or not passes_funnel_restriction(user_id, lead_funnel, meeting_date):
+                    excluded["funnel_restricted"] += 1
+                    continue
 
             rep_totals.setdefault(user_id, {}).setdefault(meeting_date, 0)
             rep_totals[user_id][meeting_date] += 1
@@ -824,7 +871,7 @@ def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids):
         f"({raw_count} raw, {pages} pages) [{elapsed_since(step_start)}]")
     log(f"   ↪ Excluded: {excluded['no_lead']} no lead · {excluded['status']} canceled/declined · "
         f"{excluded['title']} admin titles · {excluded['out_of_range']} out of window · "
-        f"{excluded['not_lane_rep']} not on a lane")
+        f"{excluded['not_lane_rep']} not on a lane · {excluded['funnel_restricted']} funnel-restricted")
     return rep_totals
 
 
@@ -960,6 +1007,11 @@ def build_dashboard_data(field_leads, dates, today=None, lane_reps=None, lane_la
         # Get funnel
         raw_funnel = (lead.get(FIELD_FUNNEL_NAME_DEAL) or "")
         funnel = map_funnel(raw_funnel)
+
+        # Funnel-restricted reps (e.g., overflow): skip if funnel/date doesn't match
+        if not passes_funnel_restriction(lead_owner, funnel, field_date):
+            lane_excluded += 1
+            continue
 
         daily_data[field_date]["booked"] += 1
         all_funnels_seen.add(funnel)
@@ -2347,10 +2399,18 @@ def main():
     rolling_dates = [rolling_start + timedelta(days=i) for i in range(14)]
     field_leads = fetch_field_leads(rolling_start, rolling_end)
 
+    # Build lead_id → funnel map so fetch_rep_total_meetings can apply funnel restrictions
+    # (e.g., Joe Dysert's overflow Internal Webinar calls only)
+    lead_to_funnel = {}
+    for lead in field_leads:
+        lid = lead.get("id")
+        if lid:
+            lead_to_funnel[lid] = map_funnel(lead.get(FIELD_FUNNEL_NAME_DEAL) or "")
+
     # Fetch total meetings per rep (includes follow-ups, reschedules, Q&A, etc.)
     # Used for the "Total Calls" reconciliation row in rep details.
     all_lane_user_ids = LANE_1_REPS | LANE_2_REPS
-    rep_total_meetings = fetch_rep_total_meetings(rolling_start, rolling_end, all_lane_user_ids)
+    rep_total_meetings = fetch_rep_total_meetings(rolling_start, rolling_end, all_lane_user_ids, lead_to_funnel)
 
     log("\n── Lane 1 ──")
     lane1_data = build_dashboard_data(field_leads, rolling_dates, today=today, lane_reps=LANE_1_REPS, lane_label="Lane 1", rep_total_meetings=rep_total_meetings)
