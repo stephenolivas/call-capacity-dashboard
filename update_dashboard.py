@@ -319,6 +319,10 @@ ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "archive")
 # Each entry: {"date": "YYYY-MM-DD HH:MM PT", "notes": ["bullet 1", "bullet 2"]}
 
 CHANGELOG_ENTRIES = [
+    {"date": "2026-05-28 1:30 PM PT", "notes": [
+        "Total Calls row accuracy fix: now correctly excludes cancelled and declined meetings (was missing Close's variants like 'declined-by-org', 'canceled-by-lead', etc.)",
+        "Total Calls row dedup fix: multi-invitee meetings (one calendar event with multiple lead records) now count once instead of once per lead",
+    ]},
     {"date": "2026-05-21 11:00 AM PT", "notes": [
         "Joe Dysert added to Lane 1 as funnel-restricted overflow rep for Internal Webinar calls (week of 05/18–05/24 only)",
         "His calls only count when Funnel Name DEAL = Internal Webinar; outside the date window his calls don't count at all (he's not a permanent Lane 1 rep)",
@@ -807,14 +811,18 @@ def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids, lead_to_fu
         "lunch", "break", "ooo", "pto", "out of office",
         "internal", "team meeting", "1:1", "standup", "training",
     ]
-    EXCLUDED_STATUSES = {"canceled", "declined"}
+    # Prefix match so we catch all variants: canceled, canceled-by-org, canceled-by-lead,
+    # declined, declined-by-org, declined-by-lead, etc.
+    EXCLUDED_STATUS_PREFIXES = ("canceled", "declined")
 
     rep_totals = {}  # {user_id: {date: count}}
+    seen_events = set()  # (user_id, starts_at, title_lower) — dedupes multi-invitee meetings
     skip = 0
     pages = 0
     raw_count = 0
     kept_count = 0
-    excluded = {"no_lead": 0, "status": 0, "title": 0, "out_of_range": 0, "not_lane_rep": 0, "funnel_restricted": 0}
+    excluded = {"no_lead": 0, "status": 0, "title": 0, "out_of_range": 0, "not_lane_rep": 0,
+                "funnel_restricted": 0, "duplicate": 0}
 
     while True:
         data = close_get("activity/meeting", {
@@ -843,11 +851,11 @@ def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids, lead_to_fu
                 excluded["no_lead"] += 1
                 continue
             status = (m.get("status") or "").lower()
-            if status in EXCLUDED_STATUSES:
+            if status.startswith(EXCLUDED_STATUS_PREFIXES):
                 excluded["status"] += 1
                 continue
-            title = (m.get("title") or "").lower()
-            if any(p in title for p in EXCLUSION_PATTERNS):
+            title = (m.get("title") or "")
+            if any(p in title.lower() for p in EXCLUSION_PATTERNS):
                 excluded["title"] += 1
                 continue
 
@@ -858,6 +866,14 @@ def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids, lead_to_fu
                 if lead_funnel is None or not passes_funnel_restriction(user_id, lead_funnel, meeting_date):
                     excluded["funnel_restricted"] += 1
                     continue
+
+            # Dedupe multi-invitee meetings: Close emits one record per lead linked to the
+            # same calendar event. Same user + same start time + same title = same event.
+            dedup_key = (user_id, m.get("starts_at"), title.lower())
+            if dedup_key in seen_events:
+                excluded["duplicate"] += 1
+                continue
+            seen_events.add(dedup_key)
 
             rep_totals.setdefault(user_id, {}).setdefault(meeting_date, 0)
             rep_totals[user_id][meeting_date] += 1
@@ -871,7 +887,8 @@ def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids, lead_to_fu
         f"({raw_count} raw, {pages} pages) [{elapsed_since(step_start)}]")
     log(f"   ↪ Excluded: {excluded['no_lead']} no lead · {excluded['status']} canceled/declined · "
         f"{excluded['title']} admin titles · {excluded['out_of_range']} out of window · "
-        f"{excluded['not_lane_rep']} not on a lane · {excluded['funnel_restricted']} funnel-restricted")
+        f"{excluded['not_lane_rep']} not on a lane · {excluded['funnel_restricted']} funnel-restricted · "
+        f"{excluded['duplicate']} multi-invitee duplicates")
     return rep_totals
 
 
