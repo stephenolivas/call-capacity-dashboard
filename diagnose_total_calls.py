@@ -63,7 +63,9 @@ EXCLUSION_PATTERNS = [
     "lunch", "break", "ooo", "pto", "out of office",
     "internal", "team meeting", "1:1", "standup", "training",
 ]
-EXCLUDED_STATUSES = {"canceled", "declined"}
+# Prefix match catches: canceled, canceled-by-org, canceled-by-lead,
+# declined, declined-by-org, declined-by-lead
+EXCLUDED_STATUS_PREFIXES = ("canceled", "declined")
 
 PACIFIC = timezone(timedelta(hours=-7))  # PDT in May
 
@@ -109,6 +111,7 @@ def run(start_date, end_date, csv_path=None):
     counted = []          # list of dicts — meetings that PASSED all filters
     excluded_meetings = []  # (meeting, reason) — for borderline visibility
     excluded_counts = Counter()
+    seen_events = set()   # (user_id, starts_at, title_lower) — dedupe multi-invitee meetings
     raw_total = 0
     sample_meeting = None  # for the field inventory dump
 
@@ -145,18 +148,28 @@ def run(start_date, end_date, csv_path=None):
                 continue
             if not lead_id:
                 excluded_counts["no_lead"] += 1
-                # Keep a few examples for visibility
                 if excluded_counts["no_lead"] <= 5:
                     excluded_meetings.append((m, "no_lead"))
                 continue
-            if status in EXCLUDED_STATUSES:
+            if status.startswith(EXCLUDED_STATUS_PREFIXES):
                 excluded_counts["status"] += 1
+                if excluded_counts["status"] <= 5:
+                    excluded_meetings.append((m, f"status={status}"))
                 continue
             if any(p in title.lower() for p in EXCLUSION_PATTERNS):
                 excluded_counts["title_pattern"] += 1
                 if excluded_counts["title_pattern"] <= 5:
                     excluded_meetings.append((m, "title_pattern"))
                 continue
+
+            # Dedupe multi-invitee meetings (same calendar event, multiple lead records)
+            dedup_key = (uid, m.get("starts_at"), title.lower())
+            if dedup_key in seen_events:
+                excluded_counts["duplicate"] += 1
+                if excluded_counts["duplicate"] <= 5:
+                    excluded_meetings.append((m, "duplicate"))
+                continue
+            seen_events.add(dedup_key)
 
             counted.append({
                 "rep": ALL_REP_NAMES.get(uid, uid),
