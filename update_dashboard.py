@@ -237,11 +237,11 @@ LANE_1_REP_NAMES = {
     "user_7F059xEinVentOEvkRMP77fWZyvwUiTRTUOuhD11J0e": "Robin Perkins",
     "user_wF5aATmDljO6g6AHqehRPVmfCmH5j9VszbO6Q6Pjzm4": "Eric Piccione",
     "user_F0VeLnOQlWpkDncNW8rBl1V2QJ08fnDt6DcUjNATUJK": "Scott Seymour",
-    "user_pKEujUcHJfsEyI5lM6L56aXM2s5nNOU994JRjRSlAdA": "Chris Wanke",
     "user_fYWHvOuCKDuaQxSp6lROlv2rmvZZYq1kzjGvaF7OrAL": "Jake Skinner",
     "user_wHm1vcLde4RExd3vv9UOjnms5Oz8ssXg8600mQuxMPb": "Christian Hartwell",
     "user_1xDZSeOa8omjfxHXD80twTf8OieXfQ6tNCaYbVygtv1": "Dubem Adindu",
     "user_lUjlATIIgFg8mELa0GFzZUj0lG4Cs7PwQsxbi34I6Su": "Joe Dysert",
+    # Chris Wanke removed from rep details (no longer with company) — user_id retained in LANE_1_REPS so historical calls still count
 }
 LANE_1_LEAD = "user_wHm1vcLde4RExd3vv9UOjnms5Oz8ssXg8600mQuxMPb"  # Christian Hartwell
 
@@ -258,8 +258,6 @@ LANE_2_REPS = {
     "user_pKEujUcHJfsEyI5lM6L56aXM2s5nNOU994JRjRSlAdA",  # Chris Wanke → "LTF Quiz Calendar - General" (from 05/18)
 }
 LANE_2_REP_NAMES = {
-    "user_ulI4pdlkBQGJpFBjSfdf3U2deAXQATVPSAurnbL80T9": "Bryan Barcus",
-    "user_L0aaUNmM45X52HE7rj3VPWkxhahpoYobhDVAXamQMMD": "Steven Starnes",
     "user_Bov31jjnHhENBy8uWNTTL8KKax8VX7o6DugLzBYOHBG": "Lyle Hubbard",
     "user_WquWudQN7dghZsAPiNY80eJUmg1EadQg2UCQdvgbif7": "Kelly Schrader",
     "user_I0cHZ04mBXXBvbFcnwmsc2KrcMsLsKxqjW8DtJ783Hr": "Elvis Ellis",
@@ -267,6 +265,7 @@ LANE_2_REP_NAMES = {
     "user_UpJb11fzX2TuFHf7fFyWpfXr84lg2Ui7i7p5CtQkIaW": "Cameron Caswell",
     "user_MrBLkl5wCqTm7QxHxPo2ydNV5KxMllg6YZDVc12Aqzj": "Jason Aaron",
     "user_pKEujUcHJfsEyI5lM6L56aXM2s5nNOU994JRjRSlAdA": "LTF Quiz Calendar - General",
+    # Bryan Barcus and Steven Starnes removed from rep details (no longer with company) — user_ids retained in LANE_2_REPS so historical calls still count
 }
 LANE_2_LEAD = "user_MrBLkl5wCqTm7QxHxPo2ydNV5KxMllg6YZDVc12Aqzj"  # Jason Aaron
 
@@ -319,6 +318,10 @@ ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "archive")
 # Each entry: {"date": "YYYY-MM-DD HH:MM PT", "notes": ["bullet 1", "bullet 2"]}
 
 CHANGELOG_ENTRIES = [
+    {"date": "2026-05-28 3:00 PM PT", "notes": [
+        "Rep details: Chris Wanke (Lane 1), Bryan Barcus and Steven Starnes (Lane 2) removed — no longer with the company",
+        "Their historical calls still count in lane Booked totals, funnel breakdowns, and Calendar Capacity — only their individual rep rows in the Rep Details section are hidden",
+    ]},
     {"date": "2026-05-28 1:30 PM PT", "notes": [
         "Total Calls row accuracy fix: now correctly excludes cancelled and declined meetings (was missing Close's variants like 'declined-by-org', 'canceled-by-lead', etc.)",
         "Total Calls row dedup fix: multi-invitee meetings (one calendar event with multiple lead records) now count once instead of once per lead",
