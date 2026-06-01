@@ -305,6 +305,29 @@ def passes_funnel_restriction(user_id, funnel, call_date):
     if until and call_date > until: return False
     return funnel in r.get("funnels", set())
 
+
+# ── Tiered Capacity Target Schedule ──────────────────────────────────────────
+# Daily Mon-Fri booking target that drives the "Capacity to Target %" metric.
+# Each entry = (effective_date, target). The most recent effective_date <= the
+# given date wins. Add new tiers here when revenue goals change — historical
+# dates keep their original target.
+CAPACITY_TARGET_SCHEDULE = [
+    (date(2026, 6, 15), 44),
+    (date(2026, 6, 8),  40),
+    (date(2026, 6, 1),  35),
+]
+DEFAULT_CAPACITY_TARGET = 42  # used for any date before the earliest schedule entry
+
+def get_capacity_target(d):
+    """Returns the Capacity Target in effect on date d. Weekends return None
+    (no target on Sat/Sun)."""
+    if d.weekday() >= 5:
+        return None
+    for eff_date, target in CAPACITY_TARGET_SCHEDULE:  # sorted by effective_date desc
+        if d >= eff_date:
+            return target
+    return DEFAULT_CAPACITY_TARGET
+
 # Lead statuses excluded from capacity count (matches rep scorecard methodology)
 EXCLUDED_LEAD_STATUS_IDS = {
     "stat_hWIGHjzyNpl4YjIFSFz3VK4fp2ny10SFJLKAihmo4KT",  # Canceled (by Lead)
@@ -318,6 +341,11 @@ ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "archive")
 # Each entry: {"date": "YYYY-MM-DD HH:MM PT", "notes": ["bullet 1", "bullet 2"]}
 
 CHANGELOG_ENTRIES = [
+    {"date": "2026-06-01 9:00 AM PT", "notes": [
+        "Capacity Target is now tiered by date: 35 (06/01–06/07), 40 (06/08–06/14), 44 (06/15 onward). Historical dates before 06/01 keep the prior 42.",
+        "New row in Capacity Metrics: 'Total Meetings Booked' — all meetings on this lane's reps' calendars (first calls + follow-ups + reschedules etc.), lane-filtered. Same data source as the Total Calls row in Rep Details.",
+        "'Booked' row renamed to 'New Calls Booked' to disambiguate from the new total above. Same data, same calculation — drives Calendar Capacity % and Capacity to Target %.",
+    ]},
     {"date": "2026-05-28 3:00 PM PT", "notes": [
         "Rep details: Chris Wanke (Lane 1), Bryan Barcus and Steven Starnes (Lane 2) removed — no longer with the company",
         "Their historical calls still count in lane Booked totals, funnel breakdowns, and Calendar Capacity — only their individual rep rows in the Rep Details section are hidden",
@@ -1055,6 +1083,16 @@ def build_dashboard_data(field_leads, dates, today=None, lane_reps=None, lane_la
         log(f"   ⚠ Excluded {lane_excluded} leads (Lead Owner not in {lane_label})")
     log(f"   📊 {len(valid_meetings)} {lane_label} leads counted across window")
 
+    # Per-lane "Total Meetings Booked" count per date — sum of rep_total_meetings
+    # filtered to user_ids in this lane. Mirrors how "Booked" is lane-filtered.
+    total_meetings_by_date = {d: 0 for d in dates}
+    for uid, dates_dict in (rep_total_meetings or {}).items():
+        if lane_reps and uid not in lane_reps:
+            continue
+        for d, count in dates_dict.items():
+            if d in total_meetings_by_date:
+                total_meetings_by_date[d] += count
+
     return {
         "dates": dates,
         "daily_data": daily_data,
@@ -1063,6 +1101,7 @@ def build_dashboard_data(field_leads, dates, today=None, lane_reps=None, lane_la
         "today": today,
         "rep_data": rep_data,
         "rep_total_meetings": rep_total_meetings or {},
+        "total_meetings_by_date": total_meetings_by_date,
     }
 
 
@@ -1308,22 +1347,29 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
         return ""
 
     # Capacity metrics (staging: Calendly-driven with max tracking)
-    target_r = cal_avail_r = booked_r = open_r = missed_r = cal_cap_pct_r = cap_pct_r = ""
-    CAPACITY_TARGET = 42  # Daily target Mon-Fri to meet revenue goals
+    target_r = total_meet_r = cal_avail_r = booked_r = open_r = missed_r = cal_cap_pct_r = cap_pct_r = ""
+    total_meetings_by_date = data.get("total_meetings_by_date", {})
     for d in dates:
         b = daily[d]["booked"]
         cal_slots = daily[d].get("calendly_available")  # Live open slots from Calendly
         max_total = daily[d].get("max_calendar_availability")  # Max tracked total
         t = tc(d)
-        is_weekday = d.weekday() < 5  # Mon-Fri = 0-4
-        day_target = CAPACITY_TARGET if is_weekday else None
+        day_target = get_capacity_target(d)  # None on weekends; tiered by date for weekdays
+        total_meet = total_meetings_by_date.get(d, 0)
 
         if show_capacity:
-            # Capacity Target = 42 on weekdays, – on weekends
+            # Capacity Target = tiered Mon-Fri (see CAPACITY_TARGET_SCHEDULE), – on weekends
             if day_target is not None:
                 target_r += f'<td class="num{t}">{day_target}</td>'
             else:
                 target_r += f'<td class="num{t}">–</td>'
+
+            # Total Meetings Booked = ALL meetings on this lane's reps' calendars
+            # (first calls + follow-ups + reschedules etc.) — informational, muted gray
+            if total_meet > 0:
+                total_meet_r += f'<td class="num{t}" style="color:#777;">{total_meet}</td>'
+            else:
+                total_meet_r += f'<td class="num zero{t}">0</td>'
 
             # Calendar Availability = max tracked total (stable number)
             if max_total is not None and max_total > 0:
@@ -1333,7 +1379,7 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
                 max_total = c if c > 0 else 0
                 cal_avail_r += f'<td class="num{t}">{c if c > 0 else "–"}</td>'
 
-            # Booked
+            # New Calls Booked (formerly "Booked")
             booked_r += f'<td class="num {"booked" if b > 0 else "zero"}{t}">{b}</td>'
 
             # Open Availability = live Calendly slots
@@ -1361,7 +1407,7 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
             else:
                 cal_cap_pct_r += f'<td class="num{t}">N/A</td>'
 
-            # Capacity to Target % = Booked / Capacity Target (no cap, weekends N/A)
+            # Capacity to Target % = New Calls Booked / Capacity Target (no cap, weekends N/A)
             if day_target is not None:
                 cap_pct = b / day_target * 100
                 cap_pct_r += f'<td class="num total-num {target_class(cap_pct)}{t}">{cap_pct:.1f}%</td>'
@@ -1369,6 +1415,7 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
                 cap_pct_r += f'<td class="num total-num{t}">N/A</td>'
         else:
             target_r += f'<td class="num{t}">–</td>'
+            total_meet_r += f'<td class="num zero{t}" style="color:#777;">{total_meet if total_meet > 0 else 0}</td>'
             cal_avail_r += f'<td class="num{t}">–</td>'
             booked_r += f'<td class="num {"booked" if b > 0 else "zero"}{t}">{b}</td>'
             open_r += f'<td class="num{t}">–</td>'
@@ -1486,8 +1533,9 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
       <thead><tr><th></th>{date_headers}</tr></thead>
       <tbody>
         <tr><td class="metric">Capacity Target</td>{target_r}</tr>
+        <tr><td class="metric">Total Meetings Booked</td>{total_meet_r}</tr>
         <tr><td class="metric">Calendar Availability</td>{cal_avail_r}</tr>
-        <tr><td class="metric">Booked</td>{booked_r}</tr>
+        <tr><td class="metric">New Calls Booked</td>{booked_r}</tr>
         <tr><td class="metric">Open Availability</td>{open_r}</tr>
         <tr><td class="metric">Booking Window Missed</td>{missed_r}</tr>
         <tr><td class="metric">Calendar Capacity %</td>{cal_cap_pct_r}</tr>
