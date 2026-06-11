@@ -220,6 +220,7 @@ HARD_EXCLUDED_USER_IDS = {
 FIELD_FUNNEL_NAME_DEAL = "custom.cf_xqDQE8fkPsWa0RNEve7hcaxKblCe6489XeZGRDzyPdX"
 FIELD_FIRST_SALES_CALL = "custom.cf_LFdYEQ6bsgp49YjZzefypDmdVx8iwuakWDSLPLpVrBq"
 FIELD_LEAD_OWNER       = "custom.cf_gOfS9pFwext58oberEegLyix8hZzeHrxhCZOVh3P3rd"
+FIELD_REACTIVATION_SETTER = "custom.cf_vz6kNiu4ItFxRA8Y9HKlWIoQMq3TsdaQqKekQ2YuxVk"  # only meaningful on Reactivation Scrapers leads
 LEAD_FIELDS = ",".join(["id", "display_name", "name", "status_id", FIELD_FUNNEL_NAME_DEAL])
 
 # Lane 1 reps — Christian Hartwell is Lane 1 Lead
@@ -341,6 +342,9 @@ ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "archive")
 # Each entry: {"date": "YYYY-MM-DD HH:MM PT", "notes": ["bullet 1", "bullet 2"]}
 
 CHANGELOG_ENTRIES = [
+    {"date": "2026-06-01 11:30 AM PT", "notes": [
+        "Reactivation Scrapers funnel row is now expandable — click to drill down by setter (Reactivation - Setter Name field). Collapsed by default. Setters sorted by total descending; missing setter values appear as 'Unknown Setter' for visibility.",
+    ]},
     {"date": "2026-06-01 9:00 AM PT", "notes": [
         "Capacity Target is now tiered by date: 35 (06/01–06/07), 40 (06/08–06/14), 44 (06/15 onward). Historical dates before 06/01 keep the prior 42.",
         "New row in Capacity Metrics: 'Total Meetings Booked' — all meetings on this lane's reps' calendars (first calls + follow-ups + reschedules etc.), lane-filtered. Same data source as the Total Calls row in Rep Details.",
@@ -696,7 +700,7 @@ def fetch_field_leads(start_date, end_date):
         f'{FIELD_FIRST_SALES_CALL} >= "{start_date.isoformat()}" '
         f'and {FIELD_FIRST_SALES_CALL} < "{end_date.isoformat()}"'
     )
-    fields = ",".join(["id", "display_name", "status_id", FIELD_FIRST_SALES_CALL, FIELD_FUNNEL_NAME_DEAL, FIELD_LEAD_OWNER])
+    fields = ",".join(["id", "display_name", "status_id", FIELD_FIRST_SALES_CALL, FIELD_FUNNEL_NAME_DEAL, FIELD_LEAD_OWNER, FIELD_REACTIVATION_SETTER])
     leads = []
     skip = 0
     log(f"📥 Fetching leads by First Sales Call Booked Date ({start_date} to {end_date})...")
@@ -1013,6 +1017,9 @@ def build_dashboard_data(field_leads, dates, today=None, lane_reps=None, lane_la
         for uid in lane_reps:
             rep_data[uid] = {d: {} for d in dates}
 
+    # Reactivation Scrapers setter drilldown: { setter_name: { date: count } }
+    setter_data = {}
+
     valid_meetings = []
     status_excluded = 0
     lane_excluded = 0
@@ -1069,6 +1076,12 @@ def build_dashboard_data(field_leads, dates, today=None, lane_reps=None, lane_la
         if lane_reps and lead_owner in rep_data:
             rep_data[lead_owner][field_date][funnel] = rep_data[lead_owner][field_date].get(funnel, 0) + 1
 
+        # Track per-setter for the Reactivation Scrapers drilldown
+        if funnel == "Reactivation Scrapers":
+            setter = (lead.get(FIELD_REACTIVATION_SETTER) or "").strip() or "Unknown Setter"
+            setter_data.setdefault(setter, {d: 0 for d in dates})
+            setter_data[setter][field_date] = setter_data[setter].get(field_date, 0) + 1
+
         valid_meetings.append({
             "date": field_date,
             "title": lead.get("display_name", ""),
@@ -1102,6 +1115,7 @@ def build_dashboard_data(field_leads, dates, today=None, lane_reps=None, lane_la
         "rep_data": rep_data,
         "rep_total_meetings": rep_total_meetings or {},
         "total_meetings_by_date": total_meetings_by_date,
+        "setter_data": setter_data,
     }
 
 
@@ -1255,6 +1269,7 @@ def target_class(pct):
 def build_funnel_rows(data, dates, today, daily_goal_map, section_filter):
     """Build HTML rows for funnels in a given section. Only shows funnels with ≥1 call."""
     daily = data["daily_data"]
+    setter_data = data.get("setter_data", {})
     rows = ""
 
     # Get configured funnels for this section
@@ -1297,7 +1312,34 @@ def build_funnel_rows(data, dates, today, daily_goal_map, section_filter):
                 else:
                     cells += f'<td class="num zero{tc}">0</td>'
 
-        rows += f'<tr><td class="label">{fname}</td>{cells}</tr>\n'
+        # Special case: Reactivation Scrapers gets an expand chevron + per-setter sub-rows
+        if fname == "Reactivation Scrapers" and setter_data:
+            # Sort setters by total descending so heaviest contributors show first
+            setters_sorted = sorted(
+                setter_data.items(),
+                key=lambda kv: (-sum(kv[1].values()), kv[0])
+            )
+            # Filter setters with no calls in the window (defensive — shouldn't happen but safe)
+            setters_sorted = [(s, byd) for s, byd in setters_sorted if sum(byd.values()) > 0]
+
+            rows += (
+                f'<tr class="funnel-expandable" onclick="toggleSetterRows(this)">'
+                f'<td class="label"><span class="chevron">▶</span> {fname}</td>'
+                f'{cells}</tr>\n'
+            )
+            for setter_name, by_date in setters_sorted:
+                sub_cells = ""
+                for d in dates:
+                    tc = " today" if d == today else (" past" if today and d < today else "")
+                    c = by_date.get(d, 0)
+                    sub_cells += f'<td class="num{tc}">{c}</td>' if c > 0 else f'<td class="num zero{tc}">0</td>'
+                rows += (
+                    f'<tr class="setter-row" style="display:none;">'
+                    f'<td class="label" style="padding-left:2rem;font-size:0.72rem;color:#555;">{setter_name}</td>'
+                    f'{sub_cells}</tr>\n'
+                )
+        else:
+            rows += f'<tr><td class="label">{fname}</td>{cells}</tr>\n'
 
     return rows
 
@@ -1630,6 +1672,10 @@ def generate_rolling_html(lane1_data, lane2_data, lane1_detail=None, lane2_detai
     .day-clickable { cursor:pointer; transition:background 0.15s, transform 0.1s; position:relative; }
     .day-clickable:hover { background:rgba(27,122,46,0.08); border-radius:4px; }
     .day-clickable:active { transform:scale(0.97); }
+    .funnel-expandable { cursor:pointer; transition:background 0.15s; }
+    .funnel-expandable:hover { background:rgba(27,122,46,0.05); }
+    .funnel-expandable .chevron { display:inline-block; font-size:0.65rem; color:#888; margin-right:4px; transition:transform 0.15s; }
+    .setter-row td.label { font-style:italic; }
     .day-panel-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.3); z-index:998; }
     .day-panel { display:none; position:fixed; top:0; right:0; width:380px; height:100%; background:#fff; box-shadow:-4px 0 20px rgba(0,0,0,0.15);
                  z-index:999; overflow-y:auto; padding:1.5rem; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
@@ -1665,6 +1711,18 @@ def generate_rolling_html(lane1_data, lane2_data, lane1_detail=None, lane2_detai
       document.getElementById('btn1').className = 'lane-btn' + (n===1 ? ' active' : '');
       document.getElementById('btn2').className = 'lane-btn' + (n===2 ? ' active' : '');
       closeDayPanel();
+    }
+
+    function toggleSetterRows(row) {
+      var chevron = row.querySelector('.chevron');
+      var expanded = row.classList.toggle('expanded');
+      chevron.textContent = expanded ? '▼' : '▶';
+      // Toggle all immediately-following sibling .setter-row elements (until next non-setter row)
+      var next = row.nextElementSibling;
+      while (next && next.classList.contains('setter-row')) {
+        next.style.display = expanded ? '' : 'none';
+        next = next.nextElementSibling;
+      }
     }
 
     function showDayDetail(dateStr) {
