@@ -1332,7 +1332,7 @@ def build_funnel_rows(data, dates, today, daily_goal_map, section_filter):
                 for d in dates:
                     tc = " today" if d == today else (" past" if today and d < today else "")
                     c = by_date.get(d, 0)
-                    sub_cells += f'<td class="num{tc}">{c}</td>' if c > 0 else f'<td class="num zero{tc}">0</td>'
+                    sub_cells += f'<td class="num{tc}" style="color:#777;">{c}</td>' if c > 0 else f'<td class="num zero{tc}">0</td>'
                 rows += (
                     f'<tr class="setter-row" style="display:none;">'
                     f'<td class="label" style="padding-left:2rem;font-size:0.72rem;color:#555;">{setter_name}</td>'
