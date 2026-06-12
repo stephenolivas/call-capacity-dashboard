@@ -350,6 +350,9 @@ ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "archive")
 # Each entry: {"date": "YYYY-MM-DD HH:MM PT", "notes": ["bullet 1", "bullet 2"]}
 
 CHANGELOG_ENTRIES = [
+    {"date": "2026-06-01 1:15 PM PT", "notes": [
+        "Funnel Breakdown order swapped — In-House now renders above External (Uncategorized stays at the bottom).",
+    ]},
     {"date": "2026-06-01 1:00 PM PT", "notes": [
         "Added new Lane 1 reps: Joseph Vaughan, Luis Galarza, Danny Santolaya, Shreya Bechra. Their leads will be counted toward Lane 1 totals, they'll appear in Rep Details with funnel breakdowns, and their meetings will be picked up by the Total Calls row.",
     ]},
@@ -1560,17 +1563,17 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
 
     # Build section HTML, only include sections with rows
     funnel_html = ""
-    if ext_rows:
-        funnel_html += f"""
-    <div class="sec">FUNNEL BREAKDOWN — EXTERNAL</div>
-    <table><colgroup><col style="width:200px"><col span="{n_cols}"></colgroup>
-      <tbody>{ext_rows}</tbody>
-    </table>"""
     if inh_rows:
         funnel_html += f"""
     <div class="sec">FUNNEL BREAKDOWN — IN-HOUSE</div>
     <table><colgroup><col style="width:200px"><col span="{n_cols}"></colgroup>
       <tbody>{inh_rows}</tbody>
+    </table>"""
+    if ext_rows:
+        funnel_html += f"""
+    <div class="sec">FUNNEL BREAKDOWN — EXTERNAL</div>
+    <table><colgroup><col style="width:200px"><col span="{n_cols}"></colgroup>
+      <tbody>{ext_rows}</tbody>
     </table>"""
     if unc_rows:
         funnel_html += f"""
