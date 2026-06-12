@@ -233,6 +233,10 @@ LANE_1_REPS = {
     "user_wHm1vcLde4RExd3vv9UOjnms5Oz8ssXg8600mQuxMPb",  # Christian Hartwell (Lead)
     "user_1xDZSeOa8omjfxHXD80twTf8OieXfQ6tNCaYbVygtv1",  # Dubem Adindu
     "user_lUjlATIIgFg8mELa0GFzZUj0lG4Cs7PwQsxbi34I6Su",  # Joe Dysert (overflow — see LANE_FUNNEL_RESTRICTIONS)
+    "user_7HSxi55O8q5jO11khvrTcAGoL2nlcoa3kZ6loAY6i78",  # Joseph Vaughan
+    "user_Ap8we63okFA5Cw9pvr5xgccvqDlIfisKVtFKt6oBe6p",  # Luis Galarza
+    "user_XEbPgLixZy4dhuLp34WogOzCIChkKEnrffDnHlxOnA7",  # Danny Santolaya
+    "user_1TKtkacQ7ZMKkcqnmCERikTYWwGltp5XUjEE9Hshple",  # Shreya Bechra
 }
 LANE_1_REP_NAMES = {
     "user_7F059xEinVentOEvkRMP77fWZyvwUiTRTUOuhD11J0e": "Robin Perkins",
@@ -242,6 +246,10 @@ LANE_1_REP_NAMES = {
     "user_wHm1vcLde4RExd3vv9UOjnms5Oz8ssXg8600mQuxMPb": "Christian Hartwell",
     "user_1xDZSeOa8omjfxHXD80twTf8OieXfQ6tNCaYbVygtv1": "Dubem Adindu",
     "user_lUjlATIIgFg8mELa0GFzZUj0lG4Cs7PwQsxbi34I6Su": "Joe Dysert",
+    "user_7HSxi55O8q5jO11khvrTcAGoL2nlcoa3kZ6loAY6i78": "Joseph Vaughan",
+    "user_Ap8we63okFA5Cw9pvr5xgccvqDlIfisKVtFKt6oBe6p": "Luis Galarza",
+    "user_XEbPgLixZy4dhuLp34WogOzCIChkKEnrffDnHlxOnA7": "Danny Santolaya",
+    "user_1TKtkacQ7ZMKkcqnmCERikTYWwGltp5XUjEE9Hshple": "Shreya Bechra",
     # Chris Wanke removed from rep details (no longer with company) — user_id retained in LANE_1_REPS so historical calls still count
 }
 LANE_1_LEAD = "user_wHm1vcLde4RExd3vv9UOjnms5Oz8ssXg8600mQuxMPb"  # Christian Hartwell
@@ -342,6 +350,9 @@ ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "archive")
 # Each entry: {"date": "YYYY-MM-DD HH:MM PT", "notes": ["bullet 1", "bullet 2"]}
 
 CHANGELOG_ENTRIES = [
+    {"date": "2026-06-01 1:00 PM PT", "notes": [
+        "Added new Lane 1 reps: Joseph Vaughan, Luis Galarza, Danny Santolaya, Shreya Bechra. Their leads will be counted toward Lane 1 totals, they'll appear in Rep Details with funnel breakdowns, and their meetings will be picked up by the Total Calls row.",
+    ]},
     {"date": "2026-06-01 11:30 AM PT", "notes": [
         "Reactivation Scrapers funnel row is now expandable — click to drill down by setter (Reactivation - Setter Name field). Collapsed by default. Setters sorted by total descending; missing setter values appear as 'Unknown Setter' for visibility.",
     ]},
