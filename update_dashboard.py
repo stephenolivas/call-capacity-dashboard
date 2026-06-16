@@ -66,6 +66,12 @@ def fetch_calendly_available_slots(dates):
     Uses Consultation calendar first (2-3 day window). For days where
     Consultation returns 0, falls back to Accelerator (5-day window).
     Calendars share availability, so we never sum them.
+
+    Query window uses PACIFIC date boundaries (midnight PT → next midnight PT)
+    converted to UTC, not UTC date boundaries — otherwise late-evening PT runs
+    produce queries where start_time is in the past or end_time is before
+    start_time, and Calendly returns HTTP 400.
+
     Returns: {date_obj: int} — available slot count per day.
     """
     if not CALENDLY_API_KEY:
@@ -79,18 +85,26 @@ def fetch_calendly_available_slots(dates):
     result = {}
 
     for d in dates:
-        # For today, use current UTC time as start (can't query past times)
-        if d == today_pacific:
-            # Use current UTC time + 1 min buffer to ensure "in the future"
-            buffer_time = now_utc + timedelta(minutes=1)
-            start = buffer_time.strftime("%Y-%m-%dT%H:%M:%SZ")
-            is_today = True
-        else:
-            start = f"{d.isoformat()}T00:00:00Z"
-            is_today = False
-        end = f"{d.isoformat()}T23:59:59Z"
+        # Build PT-day boundary in UTC: PT midnight on d → PT midnight on d+1
+        day_start_pt = datetime.combine(d, datetime.min.time(), tzinfo=PACIFIC)
+        day_end_pt   = day_start_pt + timedelta(days=1)
+        day_start_utc = day_start_pt.astimezone(timezone.utc)
+        day_end_utc   = day_end_pt.astimezone(timezone.utc) - timedelta(seconds=1)
 
-        # Try Consultation first (shorter window, primary calendar)
+        # If PT day hasn't started yet → query full PT day in UTC
+        # If PT day is in progress → start from now + 1min buffer
+        # If PT day has fully ended → skip (no future slots possible)
+        if now_utc >= day_end_utc:
+            result[d] = 0
+            log(f"   {d.strftime('%a %m/%d')}: PT day already ended → 0")
+            continue
+        start_dt = max(day_start_utc, now_utc + timedelta(minutes=1))
+        end_dt   = day_end_utc
+        start = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        end   = end_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        is_today = d == today_pacific
+
+        # Try Consultation first
         consult_count = 0
         consult_error = None
         try:
@@ -102,38 +116,34 @@ def fetch_calendly_available_slots(dates):
         except Exception as e:
             consult_error = str(e)[:200]
 
-        if is_today:
-            log(f"   {d.strftime('%a %m/%d')} (TODAY): Consultation={consult_count} (start={start}){' ERR: ' + consult_error if consult_error else ''}")
-
         if consult_count > 0:
             result[d] = consult_count
-            if not is_today:
-                log(f"   {d.strftime('%a %m/%d')}: {consult_count} slots (Consultation)")
+            log(f"   {d.strftime('%a %m/%d')}{' (TODAY)' if is_today else ''}: {consult_count} slots (Consultation)")
+            continue
+
+        # Consultation returned 0 — try Accelerator
+        accel_count = 0
+        accel_error = None
+        try:
+            data = calendly_get(
+                f"{CALENDLY_API_BASE}/event_type_available_times",
+                {"event_type": CALENDLY_ACCELERATOR_URI, "start_time": start, "end_time": end}
+            )
+            accel_count = len(data.get("collection", []))
+        except Exception as e:
+            accel_error = str(e)[:200]
+
+        if accel_count > 0:
+            result[d] = accel_count
+            log(f"   {d.strftime('%a %m/%d')}{' (TODAY)' if is_today else ''}: {accel_count} slots (Accelerator fallback)")
         else:
-            # Consultation returned 0 — try Accelerator (longer window)
-            accel_count = 0
-            accel_error = None
-            try:
-                data = calendly_get(
-                    f"{CALENDLY_API_BASE}/event_type_available_times",
-                    {"event_type": CALENDLY_ACCELERATOR_URI, "start_time": start, "end_time": end}
-                )
-                accel_count = len(data.get("collection", []))
-            except Exception as e:
-                accel_error = str(e)[:200]
-
-            if is_today:
-                log(f"   {d.strftime('%a %m/%d')} (TODAY): Accelerator={accel_count}{' ERR: ' + accel_error if accel_error else ''}")
-
-            if accel_count > 0:
-                result[d] = accel_count
-                if not is_today:
-                    log(f"   {d.strftime('%a %m/%d')}: {accel_count} slots (Accelerator)")
-            else:
-                # Both returned 0 — store 0 (no open slots, not "no data")
-                result[d] = 0
-                if not is_today:
-                    log(f"   {d.strftime('%a %m/%d')}: 0 slots (no availability)")
+            result[d] = 0
+            # Always surface errors — silent swallowing here is what hid this exact bug
+            err_parts = []
+            if consult_error: err_parts.append(f"Consult ERR: {consult_error}")
+            if accel_error:   err_parts.append(f"Accel ERR: {accel_error}")
+            err_suffix = (" — " + " | ".join(err_parts)) if err_parts else ""
+            log(f"   {d.strftime('%a %m/%d')}{' (TODAY)' if is_today else ''}: 0 slots (no availability){err_suffix}")
 
     if not result:
         log("   ⚠ No available slots found (may be outside scheduling window)")
@@ -350,6 +360,10 @@ ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "archive")
 # Each entry: {"date": "YYYY-MM-DD HH:MM PT", "notes": ["bullet 1", "bullet 2"]}
 
 CHANGELOG_ENTRIES = [
+    {"date": "2026-06-15 7:45 PM PT", "notes": [
+        "Calendly availability fix: query window now uses Pacific date boundaries (midnight PT → next midnight PT, converted to UTC) instead of UTC date boundaries. Late-evening runs (after 5 PM PT) were producing Calendly queries with start_time in the past, which the API rejected with HTTP 400 — silently swallowed by the dashboard and shown as '0 open slots'. Affected today + tomorrow during PT evening runs.",
+        "Error logging fix: Calendly API errors now log for every day, not just today. The original silent-error swallowing for non-today days is what hid this bug.",
+    ]},
     {"date": "2026-06-01 1:15 PM PT", "notes": [
         "Funnel Breakdown order swapped — In-House now renders above External (Uncategorized stays at the bottom).",
     ]},
