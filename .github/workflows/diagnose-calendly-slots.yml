@@ -1,0 +1,50 @@
+name: Diagnose Calendly Slots
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: 'Start date (YYYY-MM-DD). Leave blank for today.'
+        required: false
+        default: ''
+      end_date:
+        description: 'End date inclusive (YYYY-MM-DD). Leave blank for today + 9 days.'
+        required: false
+        default: ''
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run diagnostic
+        env:
+          CALENDLY_API_KEY: ${{ secrets.CALENDLY_API_KEY }}
+        run: |
+          ARGS=""
+          if [ -n "${{ github.event.inputs.start_date }}" ]; then
+            ARGS="$ARGS --start ${{ github.event.inputs.start_date }}"
+          fi
+          if [ -n "${{ github.event.inputs.end_date }}" ]; then
+            ARGS="$ARGS --end ${{ github.event.inputs.end_date }}"
+          fi
+          python3 diagnose_calendly_slots.py $ARGS 2>&1 | tee calendly_diagnostic_output.txt
+
+      - name: Upload diagnostic output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: calendly-slots-diagnostic
+          path: calendly_diagnostic_output.txt
+          retention-days: 30
+          if-no-files-found: warn
