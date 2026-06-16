@@ -360,6 +360,9 @@ ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "archive")
 # Each entry: {"date": "YYYY-MM-DD HH:MM PT", "notes": ["bullet 1", "bullet 2"]}
 
 CHANGELOG_ENTRIES = [
+    {"date": "2026-06-16 9:00 AM PT", "notes": [
+        "New funnel added to the In-House Funnel Breakdown: 'LTF - In-House'. No monthly goal set yet — let me know if/when one should be configured.",
+    ]},
     {"date": "2026-06-15 7:45 PM PT", "notes": [
         "Calendly availability fix: query window now uses Pacific date boundaries (midnight PT → next midnight PT, converted to UTC) instead of UTC date boundaries. Late-evening runs (after 5 PM PT) were producing Calendly queries with start_time in the past, which the API rejected with HTTP 400 — silently swallowed by the dashboard and shown as '0 open slots'. Affected today + tomorrow during PT evening runs.",
         "Error logging fix: Calendly API errors now log for every day, not just today. The original silent-error swallowing for non-today days is what hid this bug.",
@@ -478,6 +481,7 @@ FUNNEL_CONFIG = [
     {"name": "VSL",                     "close_values": ["VSL"],               "monthly_goal": 110, "section": "inhouse"},
     {"name": "Website",                 "close_values": ["Website"],           "monthly_goal": 100, "section": "inhouse"},
     {"name": "Internal Webinar",        "close_values": ["Internal Webinar"],  "monthly_goal": 70,  "section": "inhouse"},
+    {"name": "LTF - In-House",          "close_values": ["LTF - In-House"],    "monthly_goal": None, "section": "inhouse"},
     {"name": "Mike Newsletter",           "close_values": ["Mike Newsletter"],   "monthly_goal": 10,  "section": "inhouse"},
     {"name": "AK TikTok",                "close_values": ["Tik Tok"],           "monthly_goal": 22, "section": "inhouse"},
     {"name": "Anthony IG",               "close_values": ["Anthony IG"],        "monthly_goal": 22, "section": "inhouse"},
