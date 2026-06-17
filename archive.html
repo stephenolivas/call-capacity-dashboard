@@ -10,7 +10,10 @@ body { font-family: 'Inter', -apple-system, system-ui, sans-serif; background: #
 .header .right .time { font-size: 0.65rem; color: #a3c4a3; }
 .dot { display: inline-block; width: 7px; height: 7px; background: #4ade80; border-radius: 50%; margin-right: 5px; }
 .wrap { padding: 1rem 1.5rem 2rem; max-width: 1500px; margin: 0 auto; }
-.sec { font-size: 0.62rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: #1b5e1b; padding: 0.55rem 0.6rem 0.3rem; border-left: 3px solid #1b5e1b; background: #f8faf8; }
+th.sec-label { color: #1b5e1b; font-size: 0.6rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; background: #f8faf8; border-left: 3px solid #1b5e1b; }
+/* Compact modifier — applied to longer labels (e.g. UNCATEGORIZED) so they fit
+   in the 200px first column without forcing the other labels smaller too. */
+th.sec-label.is-compact { font-size: 0.52rem; letter-spacing: 0.05em; }
 .card { border: 1px solid #d4d4d4; border-radius: 4px; overflow-x: auto; margin-bottom: 1rem; background: #fff; }
 table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 th { padding: 0.5rem 0.6rem; font-size: 0.68rem; font-weight: 700; text-align: center; color: #555; border-bottom: 2px solid #d4d4d4; white-space: nowrap; background: #fafafa; line-height: 1.4; }
@@ -58,15 +61,15 @@ tr.section-label-row.sec-ltf td { color: #1b3a5e; background: #f0f4ff; border-to
 .ltf-total { color: #1a1a1a; font-weight: 700; }
 .ltf-pct { color: #666; font-weight: 500; font-size: 0.7rem; }
 .ltf-collapsible { margin-bottom: 1rem; }
-.ltf-collapsible summary { font-size: 0.72rem; font-weight: 600; color: #1b3a5e; cursor: pointer; padding: 0.5rem 0.6rem; background: #f0f4ff; border: 1px solid #d4d4d4; border-radius: 4px; }
-.ltf-collapsible summary:hover { background: #e4eaff; }
+.ltf-collapsible summary { font-size: 0.72rem; font-weight: 600; color: #1b5e1b; cursor: pointer; padding: 0.5rem 0.6rem; background: #f8faf8; border: 1px solid #d4d4d4; border-left: 3px solid #1b5e1b; border-radius: 4px; }
+.ltf-collapsible summary:hover { background: #eef5ee; }
 .ltf-collapsible details[open] summary { border-radius: 4px 4px 0 0; border-bottom: none; }
 .ltf-collapsible details[open] .card { margin-top: 0 !important; border-top: none; border-radius: 0 0 4px 4px; }
 @media (max-width: 900px) { .header { padding: 0.6rem 0.75rem; } .wrap { padding: 0.5rem 0.75rem; } .summary-cards { grid-template-columns: 1fr; } }
  a:hover { text-decoration: underline !important; }</style></head><body>
 <div class="header">
   <div><h1>📞 Call Capacity Dashboard — Archive</h1><div class="sub">Historical snapshots and summaries</div></div>
-  <div class="right"><div class="date"><span class="dot"></span>Wednesday, June 17, 2026</div><div class="time">Updated: 11:19 AM PDT</div></div>
+  <div class="right"><div class="date"><span class="dot"></span>Wednesday, June 17, 2026</div><div class="time">Updated: 11:26 AM PDT</div></div>
 </div>
 <div class="wrap">
   <div style="margin-bottom:1rem;"><a href="index.html" style="color:#1b7a2e; font-weight:600; text-decoration:none; font-size:0.85rem;">← Back to Live Dashboard</a></div>
@@ -198,5 +201,5 @@ tr.section-label-row.sec-ltf td { color: #1b3a5e; background: #f0f4ff; border-to
 <tr><td class="label"><a href="archive/2026-03-04.html" style="color:#1b7a2e; text-decoration:none; font-weight:500;">Wednesday, March 4, 2026</a></td></tr>
 <tr><td class="label"><a href="archive/2026-03-03.html" style="color:#1b7a2e; text-decoration:none; font-weight:500;">Tuesday, March 3, 2026</a></td></tr>
 </tbody></table></div>
-  <div class="footer"><span>Archive generated Jun 17, 2026 at 11:19 AM PDT</span><a href="https://stephenolivas.github.io/mtd-funnel-dashboard/" target="_blank">📊 MTD Funnel Reporting →</a></div>
+  <div class="footer"><span>Archive generated Jun 17, 2026 at 11:26 AM PDT</span><a href="https://stephenolivas.github.io/mtd-funnel-dashboard/" target="_blank">📊 MTD Funnel Reporting →</a></div>
 </div></body></html>
