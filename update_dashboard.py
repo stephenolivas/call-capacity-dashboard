@@ -921,7 +921,7 @@ def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids, lead_to_fu
     Date set to that date. Used in the priority hierarchy below — a meeting whose lead is in
     this set is classified as "new" (not F/U / Resch / Other) regardless of its title.
 
-    Returns: (rep_totals, rep_categories) where:
+    Returns: (rep_totals, rep_categories, non_new_meetings) where:
       rep_totals     = {user_id: {date: count}}                                 — total meetings
       rep_categories = {user_id: {date: {"fu": N, "resch": N, "other": N}}}     — non-new meetings
                        classified by title (priority hierarchy: lead-FSCBD wins
@@ -930,6 +930,9 @@ def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids, lead_to_fu
                        Math invariant (per date, no double-count):
                          new (lead-based) + fu + resch + other == total
                        Small discrepancies possible from canceled meetings of FSCBD leads.
+      non_new_meetings = [{"lead_id", "user_id", "category", "meeting_date", "title"}, ...]
+                         — per-meeting records for the F/U / Resch / Other panel detail section.
+                         Used to look up prospect names + funnels in main() for display.
     """
     log("📥 Fetching all rep meetings in window for Total Calls row + card breakdowns...")
     step_start = time.time()
@@ -951,6 +954,9 @@ def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids, lead_to_fu
 
     rep_totals = {}  # {user_id: {date: count}}
     rep_categories = {}  # {user_id: {date: {"fu": N, "resch": N, "other": N}}}
+    non_new_meetings = []  # [{"lead_id", "user_id", "category", "meeting_date", "title"}, ...]
+                           # Used to power the "F/U, Reschedule & Other Details" panel section.
+                           # Only meetings classified as fu / resch / other are captured here.
     seen_events = set()  # (user_id, starts_at, title_lower) — dedupes multi-invitee meetings
     skip = 0
     pages = 0
@@ -1025,6 +1031,13 @@ def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids, lead_to_fu
             if (lead_id, meeting_date) not in leads_with_fscbd:
                 category = classify_meeting_title(title)
                 rep_categories[user_id][meeting_date][category] += 1
+                non_new_meetings.append({
+                    "lead_id": lead_id,
+                    "user_id": user_id,
+                    "category": category,
+                    "meeting_date": meeting_date,
+                    "title": title,
+                })
 
             kept_count += 1
 
@@ -1038,12 +1051,16 @@ def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids, lead_to_fu
         f"{excluded['title']} admin titles · {excluded['out_of_range']} out of window · "
         f"{excluded['not_lane_rep']} not on a lane · {excluded['funnel_restricted']} funnel-restricted · "
         f"{excluded['duplicate']} multi-invitee duplicates")
-    return rep_totals, rep_categories
+    log(f"   ↪ Captured {len(non_new_meetings)} non-new meeting records for detail panel")
+    return rep_totals, rep_categories, non_new_meetings
 
 
-def build_day_detail(valid_meetings, booking_dates, lane_rep_names, meeting_titles=None):
+def build_day_detail(valid_meetings, booking_dates, lane_rep_names, meeting_titles=None, non_new_meetings_by_date=None):
     """Build per-day detail data for the day detail panel.
     meeting_titles: {lead_id: str} — meeting title from Close for Calendar Source
+    non_new_meetings_by_date: {date_obj: [{category, category_label, lead_name, lead_url, funnel_name, owner_name}, ...]}
+                              — per-day list of non-new (F/U / Resch / Other) meetings with
+                              fully-resolved display info, sorted by category then lead name.
     """
     from collections import Counter
 
@@ -1073,40 +1090,53 @@ def build_day_detail(valid_meetings, booking_dates, lane_rep_names, meeting_titl
         else:
             by_day[ds]["cal_source"]["Unknown"] += 1
 
+    # ── Merge non-new meeting days into by_day ─────────────────────────────────
+    # A day might have non-new meetings but no field-leads (e.g., all activity that
+    # day is follow-ups). Ensure those days still surface a panel entry.
+    non_new_meetings_by_date = non_new_meetings_by_date or {}
+    for d, items in non_new_meetings_by_date.items():
+        ds = d.isoformat() if hasattr(d, "isoformat") else d
+        if ds not in by_day:
+            by_day[ds] = {"funnels": Counter(), "reps": Counter(), "booked_on": Counter(), "cal_source": Counter(), "total": 0}
+
     result = {}
     for ds, data in by_day.items():
         total = data["total"]
-        if total == 0:
+        # Allow days with 0 "new" meetings but non-new items to still render.
+        # Pick up the matching non-new list if any.
+        non_new_list = non_new_meetings_by_date.get(date.fromisoformat(ds), []) if ds else []
+        if total == 0 and not non_new_list:
             continue
 
-        # Funnels: top 4 + Other
-        funnel_sorted = data["funnels"].most_common()
-        if len(funnel_sorted) > 4:
-            top4 = funnel_sorted[:4]
-            other_count = sum(c for _, c in funnel_sorted[4:])
-            funnel_list = [[f, c, round(c / total * 100)] for f, c in top4]
-            funnel_list.append(["Other", other_count, round(other_count / total * 100)])
+        # Funnels: top 4 + Other (handle day with 0 valid_meetings — no funnel breakdown)
+        if total > 0:
+            funnel_sorted = data["funnels"].most_common()
+            if len(funnel_sorted) > 4:
+                top4 = funnel_sorted[:4]
+                other_count = sum(c for _, c in funnel_sorted[4:])
+                funnel_list = [[f, c, round(c / total * 100)] for f, c in top4]
+                funnel_list.append(["Other", other_count, round(other_count / total * 100)])
+            else:
+                funnel_list = [[f, c, round(c / total * 100)] for f, c in funnel_sorted]
+
+            # Reps
+            rep_list = [[r, c] for r, c in data["reps"].most_common()]
+
+            # Booked on
+            booked_items = sorted(data["booked_on"].items(), key=lambda x: x[0] if x[0] != "Unknown" else "9999")
+            booked_list = [[d, c, round(c / total * 100)] for d, c in booked_items]
         else:
-            funnel_list = [[f, c, round(c / total * 100)] for f, c in funnel_sorted]
-
-        # Reps
-        rep_list = [[r, c] for r, c in data["reps"].most_common()]
-
-        # Booked on
-        booked_items = sorted(data["booked_on"].items(), key=lambda x: x[0] if x[0] != "Unknown" else "9999")
-        booked_list = [[d, c, round(c / total * 100)] for d, c in booked_items]
-
-        # Calendar source from meeting titles
-        cal_source_sorted = data["cal_source"].most_common()
-        cal_total = sum(c for _, c in cal_source_sorted)
-        cal_source_list = [[name, count, round(count / cal_total * 100)] for name, count in cal_source_sorted] if cal_total > 0 else None
+            funnel_list = []
+            rep_list = []
+            booked_list = []
 
         result[ds] = {
             "total": total,
             "funnels": funnel_list,
             "reps": rep_list,
             "booked_on": booked_list,
-            "calendar_source": cal_source_list,
+            # F/U / Reschedule / Other meeting details — fully resolved (name, funnel, owner, lead URL).
+            "non_new_meetings": non_new_list,
         }
 
     return result
@@ -1556,6 +1586,10 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
     # Build per-date card payloads. JS picks 3 to render (prev/current/next) based
     # on a focused index pointer. All 13 days are pre-rendered as JSON below.
     cats_by_date = data.get("meetings_by_category_by_date", {})
+    # LANE-MERGE TRANSITION: Lane 1 booked map for the Booking Window Missed metric.
+    # Falls back to {} if absent so the metric just shows 0/dash instead of crashing.
+    # To roll back: delete this line and revert the `lane1_b = ...` + missed_val math below.
+    lane1_booked_by_date = data.get("lane1_booked_by_date", {})
     card_data = {}
     for d in dates:
         ds = d.isoformat()
@@ -1570,10 +1604,13 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
         # fetch_rep_total_meetings, so this sum reflects all classifiable meetings on the calendar.
         total_meet = b + cats["fu"] + cats["resch"] + cats["other"]
 
-        # Booking Window Missed = max_total - booked - open (only meaningful for today + past)
+        # Booking Window Missed = max_total - lane1_booked - open (Lane 1 perspective).
+        # Cache snapshot is Lane 1 booked + team Calendly available, so the math stays
+        # consistent. To roll back: change `lane1_b` to `b` in the line below.
+        lane1_b = lane1_booked_by_date.get(d, b)  # falls back to combined if map missing
         missed_val = None
         if max_total and max_total > 0 and cal_slots is not None and d <= today:
-            missed_val = max(0, max_total - b - cal_slots)
+            missed_val = max(0, max_total - lane1_b - cal_slots)
 
         # Open slots: prefer live Calendly value; fall back to static capacity diff for
         # today / future only. Past days never have "open slots" — they're done — so we
@@ -1832,6 +1869,28 @@ def generate_rolling_html(team_data, team_detail=None):
     .day-panel .dp-booked-table td:last-child { text-align:right; color:#888; }
     .day-panel .dp-coming-soon { color:#aaa; font-size:0.78rem; font-style:italic; padding:0.5rem 0; }
 
+    /* ── F/U, Reschedule & Other Details (collapsible) ───────────────────── */
+    .day-panel .dp-section-collapsible { cursor:pointer; user-select:none; display:flex;
+                                          align-items:center; gap:6px; }
+    .day-panel .dp-section-collapsible:hover { color:#155e1e; }
+    .day-panel .dp-chevron { font-size:0.6rem; transition:transform 0.15s; }
+    .day-panel .dp-section-count { color:#888; font-weight:600; font-size:0.65rem; letter-spacing:normal;
+                                   text-transform:none; margin-left:auto; }
+    .day-panel .dp-nonnew-list { padding:0.25rem 0 0.5rem; }
+    .day-panel .dp-nonnew-row { padding:6px 0; font-size:0.75rem; line-height:1.4; border-bottom:1px solid #f5f5f5;
+                                display:flex; flex-wrap:wrap; align-items:center; gap:4px; }
+    .day-panel .dp-nonnew-row:last-child { border-bottom:none; }
+    .day-panel .dp-cat-pill { display:inline-block; font-size:0.6rem; font-weight:700; padding:2px 6px;
+                              border-radius:3px; text-transform:uppercase; letter-spacing:0.04em;
+                              min-width:42px; text-align:center; }
+    .day-panel .dp-cat-fu    { background:#e6f3ec; color:#1b7a2e; }
+    .day-panel .dp-cat-resch { background:#fff4e0; color:#a76200; }
+    .day-panel .dp-cat-other { background:#f0f0f0; color:#555; }
+    .day-panel .dp-lead-link { color:#1b5e1b; text-decoration:underline; font-weight:600; }
+    .day-panel .dp-lead-link:hover { color:#0f3d10; }
+    .day-panel .dp-nonnew-sep { color:#ccc; margin:0 2px; }
+    .day-panel .dp-nonnew-meta { color:#666; }
+
     /* ── Hero Card Row (Phase 2) ─────────────────────────────────────────── */
     .hero-card-row { display:flex; align-items:stretch; gap:14px; padding:18px 14px !important;
                      background:#fafafa; position:relative; }
@@ -1927,7 +1986,10 @@ def generate_rolling_html(team_data, team_detail=None):
 
     function showDayDetail(dateStr) {
       var detail = _dayDetail[dateStr];
-      if (!detail || detail.total === 0) return;
+      if (!detail) return;
+      var nonNewCount = (detail.non_new_meetings || []).length;
+      // Allow panel to open if there's any data at all (new calls OR non-new meetings).
+      if (detail.total === 0 && nonNewCount === 0) return;
 
       var panel = document.getElementById('dayPanel');
       var overlay = document.getElementById('dayOverlay');
@@ -1937,41 +1999,37 @@ def generate_rolling_html(team_data, team_detail=None):
       var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
       var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
       panel.querySelector('.dp-title').textContent = days[d.getDay()] + ', ' + months[d.getMonth()] + ' ' + d.getDate();
-      panel.querySelector('.dp-subtitle').textContent = detail.total + ' calls';
+      // Subtitle: include non-new count alongside new calls when present
+      var subtitle = detail.total + ' new call' + (detail.total === 1 ? '' : 's');
+      if (nonNewCount > 0) subtitle += ' · ' + nonNewCount + ' non-new';
+      panel.querySelector('.dp-subtitle').textContent = subtitle;
 
-      // Funnels
+      // Funnels — gracefully handle empty (e.g., day with only non-new meetings)
       var funnelHtml = '';
-      var maxPct = Math.max.apply(null, detail.funnels.map(function(f){return f[2]}));
-      detail.funnels.forEach(function(f) {
-        var barW = maxPct > 0 ? (f[2] / maxPct * 100) : 0;
-        funnelHtml += '<div class="dp-bar-row">' +
-          '<span class="dp-bar-label">' + f[0] + '</span>' +
-          '<div class="dp-bar-track"><div class="dp-bar-fill" style="width:' + barW + '%"></div></div>' +
-          '<span class="dp-bar-val">' + f[1] + ' (' + f[2] + '%)</span></div>';
-      });
+      if (detail.funnels && detail.funnels.length > 0) {
+        var maxPct = Math.max.apply(null, detail.funnels.map(function(f){return f[2]}));
+        detail.funnels.forEach(function(f) {
+          var barW = maxPct > 0 ? (f[2] / maxPct * 100) : 0;
+          funnelHtml += '<div class="dp-bar-row">' +
+            '<span class="dp-bar-label">' + f[0] + '</span>' +
+            '<div class="dp-bar-track"><div class="dp-bar-fill" style="width:' + barW + '%"></div></div>' +
+            '<span class="dp-bar-val">' + f[1] + ' (' + f[2] + '%)</span></div>';
+        });
+      } else {
+        funnelHtml = '<div class="dp-coming-soon">No new sales calls on this day.</div>';
+      }
       document.getElementById('dpFunnels').innerHTML = funnelHtml;
 
       // Reps
       var repHtml = '';
-      if (detail.reps) {
+      if (detail.reps && detail.reps.length > 0) {
         detail.reps.forEach(function(r) {
           repHtml += '<div class="dp-rep-row"><span class="dp-rep-name">' + r[0] + '</span><span class="dp-rep-count">' + r[1] + '</span></div>';
         });
+      } else {
+        repHtml = '<div class="dp-coming-soon">No rep data for new sales calls.</div>';
       }
       document.getElementById('dpReps').innerHTML = repHtml;
-
-      // Calendar Source
-      var calHtml = '';
-      if (detail.calendar_source && detail.calendar_source.length > 0) {
-        calHtml = '<table class="dp-booked-table">';
-        detail.calendar_source.forEach(function(cs) {
-          calHtml += '<tr><td>' + cs[0] + '</td><td>' + cs[1] + '</td><td>' + cs[2] + '%</td></tr>';
-        });
-        calHtml += '</table>';
-      } else {
-        calHtml = '<div class="dp-coming-soon">No calendar data for this day</div>';
-      }
-      document.getElementById('dpCalSource').innerHTML = calHtml;
 
       // Booked on
       var bookedHtml = '<table class="dp-booked-table">';
@@ -1990,8 +2048,49 @@ def generate_rolling_html(team_data, team_detail=None):
       bookedHtml += '</table>';
       document.getElementById('dpBooked').innerHTML = bookedHtml;
 
+      // F/U, Reschedule & Other Details — starts collapsed
+      var nonNew = detail.non_new_meetings || [];
+      var countEl = document.getElementById('dpNonNewCount');
+      var bodyEl  = document.getElementById('dpNonNewDetails');
+      var chevEl  = document.getElementById('dpNonNewChevron');
+      countEl.textContent = '(' + nonNew.length + ')';
+      bodyEl.style.display = 'none';
+      chevEl.textContent = '▶';
+      if (nonNew.length === 0) {
+        bodyEl.innerHTML = '<div class="dp-coming-soon">No follow-up, reschedule, or other meetings on this day.</div>';
+      } else {
+        var nnHtml = '<div class="dp-nonnew-list">';
+        nonNew.forEach(function(m) {
+          var catClass = 'dp-cat-' + m.category;
+          var safeName = (m.lead_name || '(unknown lead)')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          var safeFunnel = (m.funnel_name || '(no funnel)')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          var safeOwner = (m.owner_name || '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          nnHtml += '<div class="dp-nonnew-row">' +
+            '<span class="dp-cat-pill ' + catClass + '">' + m.category_label + '</span> ' +
+            '<a href="' + m.lead_url + '" target="_blank" rel="noopener" class="dp-lead-link">' + safeName + '</a> ' +
+            '<span class="dp-nonnew-sep">|</span> ' +
+            '<span class="dp-nonnew-meta">' + safeFunnel + '</span> ' +
+            '<span class="dp-nonnew-sep">|</span> ' +
+            '<span class="dp-nonnew-meta">' + safeOwner + '</span>' +
+            '</div>';
+        });
+        nnHtml += '</div>';
+        bodyEl.innerHTML = nnHtml;
+      }
+
       panel.style.display = 'block';
       overlay.style.display = 'block';
+    }
+
+    function toggleNonNewDetails() {
+      var body = document.getElementById('dpNonNewDetails');
+      var chev = document.getElementById('dpNonNewChevron');
+      var open = body.style.display !== 'none';
+      body.style.display = open ? 'none' : 'block';
+      chev.textContent  = open ? '▶' : '▼';
     }
 
     function closeDayPanel() {
@@ -2163,11 +2262,14 @@ def generate_rolling_html(team_data, team_detail=None):
   <div class="dp-section">Rep Breakdown</div>
   <div id="dpReps"></div>
 
-  <div class="dp-section">Calendar Source</div>
-  <div id="dpCalSource"></div>
-
   <div class="dp-section">When Booked</div>
   <div id="dpBooked"></div>
+
+  <div class="dp-section dp-section-collapsible" onclick="toggleNonNewDetails()">
+    <span class="dp-chevron" id="dpNonNewChevron">▶</span> F/U, Reschedule &amp; Other Details
+    <span class="dp-section-count" id="dpNonNewCount"></span>
+  </div>
+  <div id="dpNonNewDetails" style="display:none;"></div>
 </div>
 
 {panel_js}
@@ -2815,12 +2917,79 @@ def main():
     # Fetch total meetings per rep (includes follow-ups, reschedules, Q&A, etc.)
     # Used for the "Total Calls" reconciliation row in rep details AND the hero card
     # F/U / Resch / Other breakdown (priority-classified: new > fu > resch > other).
-    rep_total_meetings, rep_meetings_by_category = fetch_rep_total_meetings(
+    rep_total_meetings, rep_meetings_by_category, non_new_meetings = fetch_rep_total_meetings(
         rolling_start, rolling_end, ALL_LANE_REPS, lead_to_funnel, leads_with_fscbd
     )
 
     log("\n── Team (single-team mode) ──")
     team_data = build_dashboard_data(field_leads, rolling_dates, today=today, lane_reps=ALL_LANE_REPS, lane_label="Team", rep_total_meetings=rep_total_meetings, rep_meetings_by_category=rep_meetings_by_category)
+
+    # ── Non-new meeting details (F/U / Resch / Other panel section) ─────────────
+    # For each non-new meeting captured by fetch_rep_total_meetings, resolve the
+    # lead's display name + funnel for the day-detail panel. Leads already in
+    # field_leads (FSCBD window) are free — only out-of-window leads need a fetch.
+    # Expected fetch count: typically 30-80 leads in a 14-day window.
+    log("\n── Resolving non-new meeting leads ──")
+    field_lead_cache = {lead.get("id"): lead for lead in field_leads if lead.get("id")}
+    unique_non_new_lead_ids = set(m["lead_id"] for m in non_new_meetings if m.get("lead_id"))
+    unresolved_lead_ids = [lid for lid in unique_non_new_lead_ids if lid not in field_lead_cache]
+    log(f"   {len(unique_non_new_lead_ids)} unique non-new-meeting leads · {len(unresolved_lead_ids)} need fetch")
+
+    lead_lookup = dict(field_lead_cache)  # start with what we already have
+    fetch_fields = ",".join(["id", "display_name", "name", "status_id", FIELD_FUNNEL_NAME_DEAL, FIELD_LEAD_OWNER])
+    for lid in unresolved_lead_ids:
+        try:
+            lead_lookup[lid] = close_get(f"lead/{lid}", {"_fields": fetch_fields})
+        except Exception as e:
+            log(f"   ⚠ Could not fetch lead {lid}: {e}")
+            lead_lookup[lid] = None
+
+    # Build structured per-day list for the panel — sorted F/U → Resch → Other within each day.
+    _category_order = {"fu": 0, "resch": 1, "other": 2}
+    _category_label = {"fu": "F/U", "resch": "Reschedule", "other": "Other"}
+    non_new_meetings_by_date = {}
+    for m in non_new_meetings:
+        d = m["meeting_date"]
+        if d not in non_new_meetings_by_date:
+            non_new_meetings_by_date[d] = []
+        lead = lead_lookup.get(m["lead_id"])
+        if lead:
+            lead_name = lead.get("display_name") or lead.get("name") or "(unknown lead)"
+            funnel    = lead.get(FIELD_FUNNEL_NAME_DEAL) or "(no funnel)"
+        else:
+            lead_name = "(unknown lead)"
+            funnel    = "(no funnel)"
+        owner_name = ALL_LANE_REP_NAMES.get(m["user_id"]) or f"User {m['user_id'][:8]}"
+        non_new_meetings_by_date[d].append({
+            "category":       m["category"],
+            "category_label": _category_label[m["category"]],
+            "lead_name":      lead_name,
+            "lead_url":       f"https://app.close.com/lead/{m['lead_id']}/",
+            "funnel_name":    funnel,
+            "owner_name":     owner_name,
+        })
+    # Sort within each day: F/U → Resch → Other, then alphabetical by lead name
+    for d in non_new_meetings_by_date:
+        non_new_meetings_by_date[d].sort(key=lambda r: (_category_order[r["category"]], r["lead_name"].lower()))
+    team_data["non_new_meetings_by_date"] = non_new_meetings_by_date
+    # ────────────────────────────────────────────────────────────────────────────
+
+    # ── LANE-MERGE TRANSITION (2026-06-17) ──────────────────────────────────────
+    # The Booking Window Missed metric is naturally a Lane-1 concept — Lane 2 reps
+    # self-source their meetings and don't consume team Calendly slots. The cached
+    # snapshots in capacity_cache.json are also historically Lane-1-only. So during
+    # the transition (and arguably long-term) we compute "missed" using Lane 1 booked
+    # rather than combined booked, otherwise Lane 2's bookings inflate the subtraction
+    # and the metric reads incorrectly (often 0 when it should be positive).
+    #
+    # To roll back: remove this block, remove `team_data["lane1_booked_by_date"]`,
+    # and revert the two uses of lane1_booked further below (in the Calendly loop
+    # and inside generate_lane_content) to the combined `booked` value.
+    log("\n── Lane 1 booked (for Booking Window Missed metric) ──")
+    _lane1_data_for_missed = build_dashboard_data(field_leads, rolling_dates, today=today, lane_reps=LANE_1_REPS, lane_label="Lane 1 (missed)")
+    lane1_booked_by_date = {d: _lane1_data_for_missed["daily_data"][d]["booked"] for d in rolling_dates}
+    team_data["lane1_booked_by_date"] = lane1_booked_by_date
+    # ────────────────────────────────────────────────────────────────────────────
 
     # ── Calendly Capacity with Last-Snapshot Tracking ──
     # Future days: always update cache with latest Available + Booked snapshot.
@@ -2842,28 +3011,33 @@ def main():
 
     for d in rolling_dates:
         booked = team_data["daily_data"][d]["booked"]
+        # LANE-MERGE TRANSITION: cache snapshot uses Lane 1 booked so the snapshot
+        # represents Lane 1 calendar perspective (Lane 2 self-sources). To roll back,
+        # delete this line and change `current_total = live_available + lane1_booked`
+        # back to `current_total = live_available + booked`.
+        lane1_booked = lane1_booked_by_date[d]
 
         if d in calendly_slots:
             live_available = calendly_slots[d]
             team_data["daily_data"][d]["calendly_available"] = live_available
-            current_total = live_available + booked
+            current_total = live_available + lane1_booked
 
             if d > today:
                 # Future day: always update with latest snapshot (overwrites previous)
                 max_cache[d] = current_total
                 team_data["daily_data"][d]["max_calendar_availability"] = current_total
-                log(f"   {d.strftime('%a %m/%d')}: {live_available} open, {booked} booked → snapshot {current_total}")
+                log(f"   {d.strftime('%a %m/%d')}: {live_available} open, {booked} booked (L1: {lane1_booked}) → snapshot {current_total}")
             else:
                 # Today: use cached value from last night (don't update)
                 cached = max_cache.get(d)
                 if cached:
                     team_data["daily_data"][d]["max_calendar_availability"] = cached
-                    log(f"   {d.strftime('%a %m/%d')} (TODAY): {live_available} open, {booked} booked → pre-day snapshot {cached}")
+                    log(f"   {d.strftime('%a %m/%d')} (TODAY): {live_available} open, {booked} booked (L1: {lane1_booked}) → pre-day snapshot {cached}")
                 else:
                     # No cache for today (first run ever) — use current as fallback
                     max_cache[d] = current_total
                     team_data["daily_data"][d]["max_calendar_availability"] = current_total
-                    log(f"   {d.strftime('%a %m/%d')} (TODAY): {live_available} open, {booked} booked → no cache, using {current_total}")
+                    log(f"   {d.strftime('%a %m/%d')} (TODAY): {live_available} open, {booked} booked (L1: {lane1_booked}) → no cache, using {current_total}")
         elif d in max_cache:
             # Trailing day — use cached snapshot
             team_data["daily_data"][d]["calendly_available"] = 0
@@ -2885,7 +3059,7 @@ def main():
 
     log("── Team meeting booking dates + calendar source ──")
     booking_dates, meeting_titles = fetch_meeting_booking_dates(team_data["valid_meetings"])
-    team_detail = build_day_detail(team_data["valid_meetings"], booking_dates, ALL_LANE_REP_NAMES, meeting_titles=meeting_titles)
+    team_detail = build_day_detail(team_data["valid_meetings"], booking_dates, ALL_LANE_REP_NAMES, meeting_titles=meeting_titles, non_new_meetings_by_date=non_new_meetings_by_date)
 
     html = generate_rolling_html(team_data, team_detail=team_detail)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f: f.write(html)
