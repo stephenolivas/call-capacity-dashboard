@@ -2929,9 +2929,19 @@ def main():
     # lead's display name + funnel for the day-detail panel. Leads already in
     # field_leads (FSCBD window) are free — only out-of-window leads need a fetch.
     # Expected fetch count: typically 30-80 leads in a 14-day window.
+    #
+    # NEW_CALLS_ONLY_REPS filter: clamped reps (Elvis, Kelly, Cameron, Jason, Lyle)
+    # have their non-new meetings excluded from the hero tile's F/U / Resch / Other
+    # counts — we apply the same filter here so the panel matches the tile exactly.
+    # Skipping these meetings also avoids fetching their leads entirely.
     log("\n── Resolving non-new meeting leads ──")
+    visible_non_new = [m for m in non_new_meetings if m["user_id"] not in NEW_CALLS_ONLY_REPS]
+    log(f"   {len(non_new_meetings)} total non-new meetings · "
+        f"{len(non_new_meetings) - len(visible_non_new)} hidden (clamped reps) · "
+        f"{len(visible_non_new)} to display")
+
     field_lead_cache = {lead.get("id"): lead for lead in field_leads if lead.get("id")}
-    unique_non_new_lead_ids = set(m["lead_id"] for m in non_new_meetings if m.get("lead_id"))
+    unique_non_new_lead_ids = set(m["lead_id"] for m in visible_non_new if m.get("lead_id"))
     unresolved_lead_ids = [lid for lid in unique_non_new_lead_ids if lid not in field_lead_cache]
     log(f"   {len(unique_non_new_lead_ids)} unique non-new-meeting leads · {len(unresolved_lead_ids)} need fetch")
 
@@ -2948,7 +2958,7 @@ def main():
     _category_order = {"fu": 0, "resch": 1, "other": 2}
     _category_label = {"fu": "F/U", "resch": "Reschedule", "other": "Other"}
     non_new_meetings_by_date = {}
-    for m in non_new_meetings:
+    for m in visible_non_new:
         d = m["meeting_date"]
         if d not in non_new_meetings_by_date:
             non_new_meetings_by_date[d] = []
