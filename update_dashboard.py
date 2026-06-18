@@ -2787,12 +2787,10 @@ def format_eod_email(data):
             {stat_row("💰 Revenue", rev_str, "#1b7a2e")}
             {stat_row("🤝 Deals Closed", str(data['deals']))}
             {stat_row("👤 Closers", closers_str)}
+            {stat_row("📅 New Meetings Today", str(data['today_count']))}
+            {stat_row("✅ Show Rate", f"{data['show_rate']:.0f}%")}
+            {stat_row("📆 Meetings Set for Tomorrow", str(data['tomorrow_count']))}
           </table>
-
-          <!-- Team Stats Table -->
-          {stat_row("📅 New Meetings Today", str(data['today_count']))}
-          {stat_row("✅ Show Rate", f"{data['show_rate']:.0f}%")}
-          {stat_row("📆 Meetings Set for Tomorrow", str(data['tomorrow_count']))}
         </td></tr>
 
         <!-- Divider -->
