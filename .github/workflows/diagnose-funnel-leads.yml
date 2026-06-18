@@ -1,0 +1,59 @@
+name: Diagnose Funnel Leads
+
+# Manual diagnostic. Use this when dashboard's funnel count for a given day
+# doesn't match what you see in Close, e.g. "dashboard shows 16 Internal Webinar
+# but I'm pulling 17 in Close." This will list every lead with FSCBD on the
+# target date, tag each as INCLUDED or EXCLUDED, and explain the exclusion
+# reason — so you can cross-reference one-to-one with Close.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_date:
+        description: 'Date to inspect (YYYY-MM-DD). Leave blank for today (PT).'
+        required: false
+        default: ''
+      funnel:
+        description: 'Funnel filter (case-insensitive substring, e.g. "Internal Webinar"). Leave blank for all funnels.'
+        required: false
+        default: ''
+      all_days:
+        description: 'Scan the full 14-day rolling window instead of one date.'
+        required: false
+        type: boolean
+        default: false
+      hide_excluded:
+        description: 'Hide the EXCLUDED section (show only counted leads).'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run diagnostic
+        env:
+          CLOSE_API_KEY: ${{ secrets.CLOSE_API_KEY }}
+          TARGET_DATE:   ${{ inputs.target_date }}
+          FUNNEL:        ${{ inputs.funnel }}
+          ALL_DAYS:      ${{ inputs.all_days }}
+          HIDE_EXCLUDED: ${{ inputs.hide_excluded }}
+        run: |
+          # Build the argv as an array so funnel names with spaces are safe.
+          ARGS=()
+          if [ -n "$TARGET_DATE" ]; then ARGS+=(--date "$TARGET_DATE"); fi
+          if [ -n "$FUNNEL" ];      then ARGS+=(--funnel "$FUNNEL"); fi
+          if [ "$ALL_DAYS" = "true" ];      then ARGS+=(--all-days); fi
+          if [ "$HIDE_EXCLUDED" = "true" ]; then ARGS+=(--no-excluded); fi
+          python diagnose_funnel_leads.py "${ARGS[@]}"
