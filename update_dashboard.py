@@ -283,8 +283,8 @@ LANE_2_REP_NAMES = {
     "user_5pAfnzGONQLUVLKqFQVpQ3570YV1gurVCTp1MMgfCDL": "John Kirk",
     "user_UpJb11fzX2TuFHf7fFyWpfXr84lg2Ui7i7p5CtQkIaW": "Cameron Caswell",
     "user_MrBLkl5wCqTm7QxHxPo2ydNV5KxMllg6YZDVc12Aqzj": "Jason Aaron",
-    "user_pKEujUcHJfsEyI5lM6L56aXM2s5nNOU994JRjRSlAdA": "LTF Quiz Calendar - General",
     # Bryan Barcus and Steven Starnes removed from rep details (no longer with company) — user_ids retained in LANE_2_REPS so historical calls still count
+    # "LTF Quiz Calendar - General" (user_pKEujUcHJfsEyI5lM6L56aXM2s5nNOU994JRjRSlAdA, Chris Wanke's repurposed calendar) removed from rep details 2026-06-18 — user_id retained in LANE_2_REPS so historical calls still count
 }
 LANE_2_LEAD = "user_MrBLkl5wCqTm7QxHxPo2ydNV5KxMllg6YZDVc12Aqzj"  # Jason Aaron
 
