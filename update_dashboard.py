@@ -360,6 +360,7 @@ def passes_funnel_restriction(user_id, funnel, call_date):
 # given date wins. Add new tiers here when revenue goals change — historical
 # dates keep their original target.
 CAPACITY_TARGET_SCHEDULE = [
+    (date(2026, 6, 22), 66),  # Fully ramped — all reps onboarded
     (date(2026, 6, 15), 44),
     (date(2026, 6, 8),  40),
     (date(2026, 6, 1),  35),
