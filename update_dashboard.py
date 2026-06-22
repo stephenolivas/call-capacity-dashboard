@@ -1058,12 +1058,16 @@ def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids, lead_to_fu
     return rep_totals, rep_categories, non_new_meetings
 
 
-def build_day_detail(valid_meetings, booking_dates, lane_rep_names, meeting_titles=None, non_new_meetings_by_date=None):
+def build_day_detail(valid_meetings, booking_dates, lane_rep_names, meeting_titles=None, non_new_meetings_by_date=None,
+                     rep_total_meetings=None, rep_meetings_by_category=None):
     """Build per-day detail data for the day detail panel.
     meeting_titles: {lead_id: str} — meeting title from Close for Calendar Source
     non_new_meetings_by_date: {date_obj: [{category, category_label, lead_name, lead_url, funnel_name, owner_name}, ...]}
                               — per-day list of non-new (F/U / Resch / Other) meetings with
                               fully-resolved display info, sorted by category then lead name.
+    rep_total_meetings:        {user_id: {date: count}} — total meetings per rep per day (clamp applied).
+    rep_meetings_by_category:  {user_id: {date: {fu, resch, other}}} — non-new meetings per rep per day (clamp applied).
+                              Both feed the per-rep New / F/U+Resch / Total breakdown shown in the panel.
     """
     from collections import Counter
 
@@ -1072,10 +1076,12 @@ def build_day_detail(valid_meetings, booking_dates, lane_rep_names, meeting_titl
         d = m["date"]
         ds = d.isoformat()
         if ds not in by_day:
-            by_day[ds] = {"funnels": Counter(), "reps": Counter(), "booked_on": Counter(), "cal_source": Counter(), "total": 0}
+            by_day[ds] = {"funnels": Counter(), "reps_uid": Counter(), "booked_on": Counter(), "cal_source": Counter(), "total": 0}
         by_day[ds]["funnels"][m["funnel"]] += 1
-        rep_name = lane_rep_names.get(m.get("lead_owner", ""), "Other")
-        by_day[ds]["reps"][rep_name] += 1
+        # Track new-call count by user_id (not name) so we can join against
+        # rep_total_meetings / rep_meetings_by_category which are keyed by user_id.
+        user_id = m.get("lead_owner", "")
+        by_day[ds]["reps_uid"][user_id] += 1
         by_day[ds]["total"] += 1
 
         lid = m.get("lead_id")
@@ -1100,16 +1106,53 @@ def build_day_detail(valid_meetings, booking_dates, lane_rep_names, meeting_titl
     for d, items in non_new_meetings_by_date.items():
         ds = d.isoformat() if hasattr(d, "isoformat") else d
         if ds not in by_day:
-            by_day[ds] = {"funnels": Counter(), "reps": Counter(), "booked_on": Counter(), "cal_source": Counter(), "total": 0}
+            by_day[ds] = {"funnels": Counter(), "reps_uid": Counter(), "booked_on": Counter(), "cal_source": Counter(), "total": 0}
+
+    rep_total_meetings        = rep_total_meetings        or {}
+    rep_meetings_by_category  = rep_meetings_by_category  or {}
 
     result = {}
     for ds, data in by_day.items():
         total = data["total"]
         # Allow days with 0 "new" meetings but non-new items to still render.
         # Pick up the matching non-new list if any.
-        non_new_list = non_new_meetings_by_date.get(date.fromisoformat(ds), []) if ds else []
+        d_obj        = date.fromisoformat(ds)
+        non_new_list = non_new_meetings_by_date.get(d_obj, [])
         if total == 0 and not non_new_list:
             continue
+
+        # ── Per-rep New / F/U+Resch+Other / Total breakdown ────────────────────
+        # Pulls together every rep with ANY activity on this day (new OR non-new),
+        # keyed by user_id then aggregated by display name (so unknown user_ids
+        # collapse into a single "Other" row). NEW_CALLS_ONLY_REPS already had
+        # their fu/resch/other zeroed and total clamped inside build_dashboard_data,
+        # so those values flow through correctly here — and we tag the entry as
+        # clamped so the JS can render "—" instead of "0" for the non-new column.
+        active_uids = set(data["reps_uid"].keys())
+        for uid, dates_dict in rep_total_meetings.items():
+            if dates_dict.get(d_obj, 0) > 0:
+                active_uids.add(uid)
+
+        rep_agg = {}  # display_name -> [new, fu_resch_other, total, is_clamped]
+        for uid in active_uids:
+            new_count       = data["reps_uid"].get(uid, 0)
+            cat             = rep_meetings_by_category.get(uid, {}).get(d_obj, {})
+            fu_resch_other  = cat.get("fu", 0) + cat.get("resch", 0) + cat.get("other", 0)
+            rep_total       = rep_total_meetings.get(uid, {}).get(d_obj, 0)
+            name            = lane_rep_names.get(uid, "Other")
+            if name not in rep_agg:
+                rep_agg[name] = [0, 0, 0, False]
+            rep_agg[name][0] += new_count
+            rep_agg[name][1] += fu_resch_other
+            rep_agg[name][2] += rep_total
+            if uid in NEW_CALLS_ONLY_REPS:
+                rep_agg[name][3] = True
+
+        # Only include reps with any activity; sort by new desc, then name asc.
+        rep_list = [[name, vals[0], vals[1], vals[2], vals[3]]
+                    for name, vals in rep_agg.items()
+                    if vals[0] + vals[1] + vals[2] > 0]
+        rep_list.sort(key=lambda r: (-r[1], r[0]))
 
         # Funnels: top 4 + Other (handle day with 0 valid_meetings — no funnel breakdown)
         if total > 0:
@@ -1122,15 +1165,11 @@ def build_day_detail(valid_meetings, booking_dates, lane_rep_names, meeting_titl
             else:
                 funnel_list = [[f, c, round(c / total * 100)] for f, c in funnel_sorted]
 
-            # Reps
-            rep_list = [[r, c] for r, c in data["reps"].most_common()]
-
             # Booked on
             booked_items = sorted(data["booked_on"].items(), key=lambda x: x[0] if x[0] != "Unknown" else "9999")
             booked_list = [[d, c, round(c / total * 100)] for d, c in booked_items]
         else:
             funnel_list = []
-            rep_list = []
             booked_list = []
 
         result[ds] = {
@@ -1863,9 +1902,18 @@ def generate_rolling_html(team_data, team_detail=None):
     .day-panel .dp-bar-track { flex:1; height:16px; background:#f0f0f0; border-radius:3px; margin:0 8px; overflow:hidden; }
     .day-panel .dp-bar-fill { height:100%; background:#1b7a2e; border-radius:3px; transition:width 0.3s; }
     .day-panel .dp-bar-val { width:55px; text-align:right; font-weight:600; font-size:0.72rem; color:#555; }
-    .day-panel .dp-rep-row { display:flex; justify-content:space-between; padding:3px 0; font-size:0.78rem; border-bottom:1px solid #f5f5f5; }
-    .day-panel .dp-rep-name { color:#333; }
-    .day-panel .dp-rep-count { font-weight:600; color:#1b7a2e; }
+    .day-panel .dp-rep-header { display:flex; align-items:center; padding:2px 0 6px; border-bottom:1px solid #eee;
+                                 font-size:0.58rem; font-weight:700; color:#888; letter-spacing:0.06em;
+                                 text-transform:uppercase; }
+    .day-panel .dp-rep-header-name { flex:1; }
+    .day-panel .dp-rep-header-col  { width:42px; text-align:right; }
+    .day-panel .dp-rep-row { display:flex; align-items:center; padding:4px 0; font-size:0.78rem; border-bottom:1px solid #f5f5f5; }
+    .day-panel .dp-rep-row:last-child { border-bottom:none; }
+    .day-panel .dp-rep-name { flex:1; color:#333; }
+    .day-panel .dp-rep-num  { width:42px; text-align:right; color:#333; font-variant-numeric:tabular-nums; }
+    .day-panel .dp-rep-num.is-new { font-weight:700; color:#1b7a2e; }
+    .day-panel .dp-rep-num.is-zero { color:#bbb; }
+    .day-panel .dp-rep-num.is-clamped { color:#999; cursor:help; }
     .day-panel .dp-booked-table { width:100%; font-size:0.78rem; border-collapse:collapse; }
     .day-panel .dp-booked-table td { padding:4px 6px; border-bottom:1px solid #f0f0f0; }
     .day-panel .dp-booked-table td:first-child { font-weight:600; }
@@ -2023,14 +2071,29 @@ def generate_rolling_html(team_data, team_detail=None):
       }
       document.getElementById('dpFunnels').innerHTML = funnelHtml;
 
-      // Reps
+      // Reps — 3-column breakdown: New · F/U+Resch+Other · Total
       var repHtml = '';
       if (detail.reps && detail.reps.length > 0) {
+        repHtml += '<div class="dp-rep-header">' +
+          '<span class="dp-rep-header-name"></span>' +
+          '<span class="dp-rep-header-col" title="New sales calls">NEW</span>' +
+          '<span class="dp-rep-header-col" title="Follow-up + Reschedule + Other (all non-new meetings). Dash means self-sourcing rep — non-new meetings are not tracked toward team totals.">F/U+</span>' +
+          '<span class="dp-rep-header-col" title="Total meetings (clamped for self-sourcing reps to equal their new-call count)">TOT</span>' +
+          '</div>';
         detail.reps.forEach(function(r) {
-          repHtml += '<div class="dp-rep-row"><span class="dp-rep-name">' + r[0] + '</span><span class="dp-rep-count">' + r[1] + '</span></div>';
+          // r = [name, new, fu_resch_other, total, is_clamped]
+          var isClamped = r[4];
+          var fuDisplay = isClamped ? '—' : r[2];
+          var fuClass   = isClamped ? 'is-clamped' : (r[2] === 0 ? 'is-zero' : '');
+          repHtml += '<div class="dp-rep-row">' +
+            '<span class="dp-rep-name">' + r[0] + '</span>' +
+            '<span class="dp-rep-num is-new' + (r[1] === 0 ? ' is-zero' : '') + '">' + r[1] + '</span>' +
+            '<span class="dp-rep-num ' + fuClass + '">' + fuDisplay + '</span>' +
+            '<span class="dp-rep-num' + (r[3] === 0 ? ' is-zero' : '') + '">' + r[3] + '</span>' +
+            '</div>';
         });
       } else {
-        repHtml = '<div class="dp-coming-soon">No rep data for new sales calls.</div>';
+        repHtml = '<div class="dp-coming-soon">No rep activity on this day.</div>';
       }
       document.getElementById('dpReps').innerHTML = repHtml;
 
@@ -3070,7 +3133,7 @@ def main():
 
     log("── Team meeting booking dates + calendar source ──")
     booking_dates, meeting_titles = fetch_meeting_booking_dates(team_data["valid_meetings"])
-    team_detail = build_day_detail(team_data["valid_meetings"], booking_dates, ALL_LANE_REP_NAMES, meeting_titles=meeting_titles, non_new_meetings_by_date=non_new_meetings_by_date)
+    team_detail = build_day_detail(team_data["valid_meetings"], booking_dates, ALL_LANE_REP_NAMES, meeting_titles=meeting_titles, non_new_meetings_by_date=non_new_meetings_by_date, rep_total_meetings=rep_total_meetings, rep_meetings_by_category=rep_meetings_by_category)
 
     html = generate_rolling_html(team_data, team_detail=team_detail)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f: f.write(html)
