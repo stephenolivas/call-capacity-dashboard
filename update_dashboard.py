@@ -884,23 +884,26 @@ def fetch_meeting_booking_dates(valid_meetings):
 
 
 # ── Meeting Title Classification (Phase 2 hero cards) ───────────────────────
-# Used by the hero card "Total Meetings" breakdown into F/U + Resch + Other.
-# Case-insensitive substring match. "Other" is the catch-all — it includes new
-# sales calls (which are separately counted via the First Sales Call field) AND
-# anything else (Q&A, onboarding, ad-hoc, etc.). The math is intentionally:
-#     fu + resch + other == total meetings booked
-# So the "Other" sub-row is large by design.
+# Used by the hero card "Total Meetings" breakdown into F/U + Resch. Title
+# classification is case-insensitive substring match. Per 2026-06-22 review,
+# the "Other" bucket has been consolidated into F/U — almost every meeting
+# previously classified as "other" was an untitled / mis-titled follow-up,
+# and given the sales process, there's no legitimate non-F/U non-resch case.
+# Priority: F/U title match wins over Resch (preserves the prior tiebreak for
+# titles like "F/U Reschedule"). Math invariant unchanged:
+#     fu + resch == total non-new meetings
 FU_TITLE_PATTERNS    = ["f/u", "follow-up", "follow up", "followup"]
 RESCH_TITLE_PATTERNS = ["reschedule", "resched", "resch"]
 
 def classify_meeting_title(title):
-    """Return 'fu', 'resch', or 'other' based on case-insensitive substring match."""
+    """Return 'fu' or 'resch' based on case-insensitive substring match.
+    Anything that doesn't match Resch patterns falls into F/U (formerly 'other')."""
     t = (title or "").lower()
     if any(p in t for p in FU_TITLE_PATTERNS):
         return "fu"
     if any(p in t for p in RESCH_TITLE_PATTERNS):
         return "resch"
-    return "other"
+    return "fu"  # was "other"; consolidated 2026-06-22
 
 
 def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids, lead_to_funnel=None, leads_with_fscbd=None):
@@ -922,19 +925,20 @@ def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids, lead_to_fu
 
     leads_with_fscbd: set of (lead_id, date) pairs where the lead has First Sales Call Booked
     Date set to that date. Used in the priority hierarchy below — a meeting whose lead is in
-    this set is classified as "new" (not F/U / Resch / Other) regardless of its title.
+    this set is classified as "new" (not F/U / Resch) regardless of its title.
 
     Returns: (rep_totals, rep_categories, non_new_meetings) where:
-      rep_totals     = {user_id: {date: count}}                                 — total meetings
-      rep_categories = {user_id: {date: {"fu": N, "resch": N, "other": N}}}     — non-new meetings
+      rep_totals     = {user_id: {date: count}}                                — total meetings
+      rep_categories = {user_id: {date: {"fu": N, "resch": N}}}                — non-new meetings
                        classified by title (priority hierarchy: lead-FSCBD wins
                        over title patterns). "new" meetings are NOT in rep_categories — they're
                        counted separately via daily_data[d]["booked"] (lead-based).
                        Math invariant (per date, no double-count):
-                         new (lead-based) + fu + resch + other == total
+                         new (lead-based) + fu + resch == total
                        Small discrepancies possible from canceled meetings of FSCBD leads.
+                       Per 2026-06-22, the prior "other" bucket was folded into "fu".
       non_new_meetings = [{"lead_id", "user_id", "category", "meeting_date", "title"}, ...]
-                         — per-meeting records for the F/U / Resch / Other panel detail section.
+                         — per-meeting records for the F/U & Reschedule panel detail section.
                          Used to look up prospect names + funnels in main() for display.
     """
     log("📥 Fetching all rep meetings in window for Total Calls row + card breakdowns...")
@@ -956,10 +960,10 @@ def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids, lead_to_fu
     EXCLUDED_STATUS_PREFIXES = ("canceled", "declined")
 
     rep_totals = {}  # {user_id: {date: count}}
-    rep_categories = {}  # {user_id: {date: {"fu": N, "resch": N, "other": N}}}
+    rep_categories = {}  # {user_id: {date: {"fu": N, "resch": N}}}
     non_new_meetings = []  # [{"lead_id", "user_id", "category", "meeting_date", "title"}, ...]
-                           # Used to power the "F/U, Reschedule & Other Details" panel section.
-                           # Only meetings classified as fu / resch / other are captured here.
+                           # Used to power the "F/U & Reschedule Details" panel section.
+                           # Only meetings classified as fu / resch are captured here.
     seen_events = set()  # (user_id, starts_at, title_lower) — dedupes multi-invitee meetings
     skip = 0
     pages = 0
@@ -1025,12 +1029,12 @@ def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids, lead_to_fu
             # Priority hierarchy:
             #   1) lead has FSCBD == meeting date → "new"  (NOT tracked in rep_categories;
             #      counted separately via daily_data[d]["booked"] which is lead-based)
-            #   2) title matches F/U pattern → "fu"
-            #   3) title matches Resch pattern → "resch"
-            #   4) otherwise → "other"
+            #   2) title matches Resch pattern → "resch"
+            #   3) otherwise → "fu"  (covers explicit F/U titles AND former "other"; see
+            #      classify_meeting_title for the 2026-06-22 consolidation rationale)
             # This guarantees each meeting is counted in exactly one bucket — no double-count
             # of a "new" meeting that happens to be titled with "F/U" or similar.
-            rep_categories.setdefault(user_id, {}).setdefault(meeting_date, {"fu": 0, "resch": 0, "other": 0})
+            rep_categories.setdefault(user_id, {}).setdefault(meeting_date, {"fu": 0, "resch": 0})
             if (lead_id, meeting_date) not in leads_with_fscbd:
                 category = classify_meeting_title(title)
                 rep_categories[user_id][meeting_date][category] += 1
@@ -1066,8 +1070,8 @@ def build_day_detail(valid_meetings, booking_dates, lane_rep_names, meeting_titl
                               — per-day list of non-new (F/U / Resch / Other) meetings with
                               fully-resolved display info, sorted by category then lead name.
     rep_total_meetings:        {user_id: {date: count}} — total meetings per rep per day (clamp applied).
-    rep_meetings_by_category:  {user_id: {date: {fu, resch, other}}} — non-new meetings per rep per day (clamp applied).
-                              Both feed the per-rep New / F/U+Resch / Total breakdown shown in the panel.
+    rep_meetings_by_category:  {user_id: {date: {fu, resch}}} — non-new meetings per rep per day (clamp applied).
+                              Both feed the per-rep New / F/U+R / Total breakdown shown in the panel.
     """
     from collections import Counter
 
@@ -1121,11 +1125,11 @@ def build_day_detail(valid_meetings, booking_dates, lane_rep_names, meeting_titl
         if total == 0 and not non_new_list:
             continue
 
-        # ── Per-rep New / F/U+Resch+Other / Total breakdown ────────────────────
+        # ── Per-rep New / F/U+Resch / Total breakdown ──────────────────────────
         # Pulls together every rep with ANY activity on this day (new OR non-new),
         # keyed by user_id then aggregated by display name (so unknown user_ids
         # collapse into a single "Other" row). NEW_CALLS_ONLY_REPS already had
-        # their fu/resch/other zeroed and total clamped inside build_dashboard_data,
+        # their fu/resch zeroed and total clamped inside build_dashboard_data,
         # so those values flow through correctly here — and we tag the entry as
         # clamped so the JS can render "—" instead of "0" for the non-new column.
         active_uids = set(data["reps_uid"].keys())
@@ -1133,17 +1137,17 @@ def build_day_detail(valid_meetings, booking_dates, lane_rep_names, meeting_titl
             if dates_dict.get(d_obj, 0) > 0:
                 active_uids.add(uid)
 
-        rep_agg = {}  # display_name -> [new, fu_resch_other, total, is_clamped]
+        rep_agg = {}  # display_name -> [new, fu_resch, total, is_clamped]
         for uid in active_uids:
-            new_count       = data["reps_uid"].get(uid, 0)
-            cat             = rep_meetings_by_category.get(uid, {}).get(d_obj, {})
-            fu_resch_other  = cat.get("fu", 0) + cat.get("resch", 0) + cat.get("other", 0)
-            rep_total       = rep_total_meetings.get(uid, {}).get(d_obj, 0)
-            name            = lane_rep_names.get(uid, "Other")
+            new_count   = data["reps_uid"].get(uid, 0)
+            cat         = rep_meetings_by_category.get(uid, {}).get(d_obj, {})
+            fu_resch    = cat.get("fu", 0) + cat.get("resch", 0)
+            rep_total   = rep_total_meetings.get(uid, {}).get(d_obj, 0)
+            name        = lane_rep_names.get(uid, "Other")
             if name not in rep_agg:
                 rep_agg[name] = [0, 0, 0, False]
             rep_agg[name][0] += new_count
-            rep_agg[name][1] += fu_resch_other
+            rep_agg[name][1] += fu_resch
             rep_agg[name][2] += rep_total
             if uid in NEW_CALLS_ONLY_REPS:
                 rep_agg[name][3] = True
@@ -1298,11 +1302,10 @@ def build_dashboard_data(field_leads, dates, today=None, lane_reps=None, lane_la
                 rep_total_meetings[uid][d] = new_calls_count
 
                 # Apply matching clamp to categories: their displayed total = their new
-                # calls only. Zero out F/U and Resch contributions. Their "other" is
-                # recomputed at team-level (see below), so the per-rep value is moot.
+                # calls only. Zero out F/U and Resch contributions.
                 if rep_meetings_by_category is not None:
                     rep_meetings_by_category.setdefault(uid, {})[d] = {
-                        "fu": 0, "resch": 0, "other": 0,
+                        "fu": 0, "resch": 0,
                     }
 
     # Per-lane "Total Meetings Booked" count per date — sum of rep_total_meetings
@@ -1315,28 +1318,28 @@ def build_dashboard_data(field_leads, dates, today=None, lane_reps=None, lane_la
             if d in total_meetings_by_date:
                 total_meetings_by_date[d] += count
 
-    # Team-level F/U / Resch / Other counts per date — for the hero card breakdown.
-    # All three are summed directly from per-rep priority-classified counts.
+    # Team-level F/U / Resch counts per date — for the hero card breakdown.
+    # Both are summed directly from per-rep priority-classified counts.
     # Priority hierarchy in fetch_rep_total_meetings guarantees no double-count:
     #   - "new" meetings (lead has FSCBD == meeting date) were excluded from rep_categories
-    #   - F/U / Resch / Other are mutually exclusive (title-based)
+    #   - F/U / Resch are mutually exclusive (title-based; per 2026-06-22 the prior
+    #     "other" bucket is folded into F/U)
     #
     # Card math (per date, assuming no canceled-meeting discrepancies):
-    #   new (lead-based, daily_data["booked"]) + fu + resch + other ≈ total_meetings
-    # The hero card displays total = new + fu + resch + other so the math always adds up,
+    #   new (lead-based, daily_data["booked"]) + fu + resch ≈ total_meetings
+    # The hero card displays total = new + fu + resch so the math always adds up,
     # which may differ slightly from the raw all-meetings count when leads have FSCBD set
     # but their meeting was canceled.
     meetings_by_category_by_date = {}
     for d in dates:
-        fu = resch = other = 0
+        fu = resch = 0
         for uid, dates_dict in (rep_meetings_by_category or {}).items():
             if lane_reps and uid not in lane_reps:
                 continue
             cats = dates_dict.get(d, {})
             fu    += cats.get("fu", 0)
             resch += cats.get("resch", 0)
-            other += cats.get("other", 0)
-        meetings_by_category_by_date[d] = {"fu": fu, "resch": resch, "other": other}
+        meetings_by_category_by_date[d] = {"fu": fu, "resch": resch}
 
     return {
         "dates": dates,
@@ -1639,12 +1642,12 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
         cal_slots = daily[d].get("calendly_available")  # Live open Calendly slots
         max_total = daily[d].get("max_calendar_availability")
         day_target = get_capacity_target(d)
-        cats = cats_by_date.get(d, {"fu": 0, "resch": 0, "other": 0})
+        cats = cats_by_date.get(d, {"fu": 0, "resch": 0})
 
-        # Card "Total Meetings Booked" = New + F/U + Resch + Other (definitional, math always works).
+        # Card "Total Meetings Booked" = New + F/U + Resch (definitional, math always works).
         # Each meeting is counted in exactly one bucket via priority hierarchy in
         # fetch_rep_total_meetings, so this sum reflects all classifiable meetings on the calendar.
-        total_meet = b + cats["fu"] + cats["resch"] + cats["other"]
+        total_meet = b + cats["fu"] + cats["resch"]
 
         # Booking Window Missed = max_total - lane1_booked - open (Lane 1 perspective).
         # Cache snapshot is Lane 1 booked + team Calendly available, so the math stays
@@ -1683,7 +1686,6 @@ def generate_lane_content(data, dates, today, daily_goal_map, n_cols, lane_rep_n
             "total_meetings": total_meet,
             "fu": cats["fu"],
             "resch": cats["resch"],
-            "other": cats["other"],
             "open_slots": open_slots,  # int or None
             "missed": missed_val,      # int or None
             "target": day_target,      # int or None (weekend)
@@ -1920,7 +1922,7 @@ def generate_rolling_html(team_data, team_detail=None):
     .day-panel .dp-booked-table td:last-child { text-align:right; color:#888; }
     .day-panel .dp-coming-soon { color:#aaa; font-size:0.78rem; font-style:italic; padding:0.5rem 0; }
 
-    /* ── F/U, Reschedule & Other Details (collapsible) ───────────────────── */
+    /* ── F/U & Reschedule Details (collapsible) ─────────────────────────── */
     .day-panel .dp-section-collapsible { cursor:pointer; user-select:none; display:flex;
                                           align-items:center; gap:6px; }
     .day-panel .dp-section-collapsible:hover { color:#155e1e; }
@@ -1936,7 +1938,6 @@ def generate_rolling_html(team_data, team_detail=None):
                               min-width:42px; text-align:center; }
     .day-panel .dp-cat-fu    { background:#e6f3ec; color:#1b7a2e; }
     .day-panel .dp-cat-resch { background:#fff4e0; color:#a76200; }
-    .day-panel .dp-cat-other { background:#f0f0f0; color:#555; }
     .day-panel .dp-lead-link { color:#1b5e1b; text-decoration:underline; font-weight:600; }
     .day-panel .dp-lead-link:hover { color:#0f3d10; }
     .day-panel .dp-nonnew-sep { color:#ccc; margin:0 2px; }
@@ -2071,13 +2072,13 @@ def generate_rolling_html(team_data, team_detail=None):
       }
       document.getElementById('dpFunnels').innerHTML = funnelHtml;
 
-      // Reps — 3-column breakdown: New · F/U+Resch+Other · Total
+      // Reps — 3-column breakdown: New · F/U+Resch · Total
       var repHtml = '';
       if (detail.reps && detail.reps.length > 0) {
         repHtml += '<div class="dp-rep-header">' +
           '<span class="dp-rep-header-name"></span>' +
           '<span class="dp-rep-header-col" title="New sales calls">NEW</span>' +
-          '<span class="dp-rep-header-col" title="Follow-up + Reschedule + Other (all non-new meetings). Dash means self-sourcing rep — non-new meetings are not tracked toward team totals.">F/U+</span>' +
+          '<span class="dp-rep-header-col" title="Follow-up + Reschedule (all non-new meetings). Dash means self-sourcing rep — non-new meetings are not tracked toward team totals.">F/U+R</span>' +
           '<span class="dp-rep-header-col" title="Total meetings (clamped for self-sourcing reps to equal their new-call count)">TOT</span>' +
           '</div>';
         detail.reps.forEach(function(r) {
@@ -2114,7 +2115,7 @@ def generate_rolling_html(team_data, team_detail=None):
       bookedHtml += '</table>';
       document.getElementById('dpBooked').innerHTML = bookedHtml;
 
-      // F/U, Reschedule & Other Details — starts collapsed
+      // F/U & Reschedule Details — starts collapsed
       var nonNew = detail.non_new_meetings || [];
       var countEl = document.getElementById('dpNonNewCount');
       var bodyEl  = document.getElementById('dpNonNewDetails');
@@ -2123,7 +2124,7 @@ def generate_rolling_html(team_data, team_detail=None):
       bodyEl.style.display = 'none';
       chevEl.textContent = '▶';
       if (nonNew.length === 0) {
-        bodyEl.innerHTML = '<div class="dp-coming-soon">No follow-up, reschedule, or other meetings on this day.</div>';
+        bodyEl.innerHTML = '<div class="dp-coming-soon">No follow-up or reschedule meetings on this day.</div>';
       } else {
         var nnHtml = '<div class="dp-nonnew-list">';
         nonNew.forEach(function(m) {
@@ -2216,10 +2217,6 @@ def generate_rolling_html(team_data, team_detail=None):
           '<div class="hc-row">' +
             '<span class="hc-row-label">Resch. Meetings</span>' +
             '<span class="hc-row-value">' + c.resch + '</span>' +
-          '</div>' +
-          '<div class="hc-row">' +
-            '<span class="hc-row-label">Other</span>' +
-            '<span class="hc-row-value">' + c.other + '</span>' +
           '</div>' +
           '<div class="hc-row hc-row-total">' +
             '<span class="hc-row-label">Total Meetings Booked</span>' +
@@ -2332,7 +2329,7 @@ def generate_rolling_html(team_data, team_detail=None):
   <div id="dpBooked"></div>
 
   <div class="dp-section dp-section-collapsible" onclick="toggleNonNewDetails()">
-    <span class="dp-chevron" id="dpNonNewChevron">▶</span> F/U, Reschedule &amp; Other Details
+    <span class="dp-chevron" id="dpNonNewChevron">▶</span> F/U &amp; Reschedule Details
     <span class="dp-section-count" id="dpNonNewCount"></span>
   </div>
   <div id="dpNonNewDetails" style="display:none;"></div>
@@ -3019,8 +3016,8 @@ def main():
             lead_lookup[lid] = None
 
     # Build structured per-day list for the panel — sorted F/U → Resch → Other within each day.
-    _category_order = {"fu": 0, "resch": 1, "other": 2}
-    _category_label = {"fu": "F/U", "resch": "Reschedule", "other": "Other"}
+    _category_order = {"fu": 0, "resch": 1}
+    _category_label = {"fu": "F/U", "resch": "Reschedule"}
     non_new_meetings_by_date = {}
     for m in visible_non_new:
         d = m["meeting_date"]
