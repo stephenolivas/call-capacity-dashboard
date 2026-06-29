@@ -509,10 +509,13 @@ FUNNEL_CONFIG = [
     # ── External ──
     {"name": "Low Ticket Funnel",       "close_values": ["Low Ticket Funnel"], "monthly_goal": 400, "section": "external"},
     {"name": "LTF - Quiz Funnel",       "close_values": ["LTF - Quiz Funnel"], "monthly_goal": None, "section": "external"},
-    {"name": "Instagram",               "close_values": ["Instagram"],         "monthly_goal": 240, "section": "external"},
+    # "(Mike)" suffix is a DASHBOARD-ONLY display label to differentiate Mike's brand
+    # pages from the Anthony funnels (below). Close still stores these as plain
+    # "Instagram" / "X" / "Linkedin" — close_values is unchanged.
+    {"name": "Instagram (Mike)",        "close_values": ["Instagram"],         "monthly_goal": 240, "section": "external"},
     {"name": "YouTube",                 "close_values": ["YouTube - OG - Cam"],"monthly_goal": 132, "section": "inhouse"},
-    {"name": "X",                       "close_values": ["X"],                 "monthly_goal": 30,  "section": "external"},
-    {"name": "Linkedin",                "close_values": ["Linkedin"],          "monthly_goal": 30,  "section": "external"},
+    {"name": "X (Mike)",                "close_values": ["X"],                 "monthly_goal": 30,  "section": "external"},
+    {"name": "Linkedin (Mike)",         "close_values": ["Linkedin"],          "monthly_goal": 30,  "section": "external"},
     {"name": "Meta Ads",                "close_values": ["Meta Ads"],          "monthly_goal": 44,  "section": "inhouse"},
     # ── In-House ──
     {"name": "VSL",                     "close_values": ["VSL"],               "monthly_goal": 110, "section": "inhouse"},
@@ -522,6 +525,8 @@ FUNNEL_CONFIG = [
     {"name": "Mike Newsletter",           "close_values": ["Mike Newsletter"],   "monthly_goal": 10,  "section": "inhouse"},
     {"name": "AK TikTok",                "close_values": ["Tik Tok"],           "monthly_goal": 22, "section": "inhouse"},
     {"name": "Anthony IG",               "close_values": ["Anthony IG"],        "monthly_goal": 22, "section": "inhouse"},
+    {"name": "Anthony X",                "close_values": ["Anthony X"],         "monthly_goal": None, "section": "inhouse"},
+    {"name": "Anthony LinkedIn",         "close_values": ["Anthony LinkedIn"],  "monthly_goal": None, "section": "inhouse"},
     {"name": "Side Hustle Nation/WWWS", "close_values": ["WWWS"],              "monthly_goal": 2,   "section": "inhouse"},
     {"name": "Passivepreneurs",         "close_values": ["Passivepreneurs"],   "monthly_goal": None, "section": "inhouse"},
     {"name": "Reactivation Email",      "close_values": ["Reactivation Email"],"monthly_goal": None, "section": "inhouse"},
@@ -538,6 +543,39 @@ for fc in FUNNEL_CONFIG:
         CLOSE_VALUE_TO_FUNNEL[cv] = fc["name"]
 
 UNCATEGORIZED_FUNNELS = ["No Attribution", "Unknown (Needs Review)"]
+
+
+# ── Funnel Goal Overrides (date-effective) ──────────────────────────────────
+# When a funnel's monthly goal changes mid-year, add an entry here keyed by
+# the funnel's display name. Each entry is a list of (effective_date, goal)
+# tuples. The lookup finds the most recent entry whose date is ≤ the first of
+# the current month. Funnels not in this dict use their FUNNEL_CONFIG
+# `monthly_goal` value unchanged for the entire year.
+#
+# Note: effective_date is typically the first of the month (goals are monthly).
+# `goal=None` clears a previously-set goal (rarely needed but supported).
+# Newest tier wins — order in the list doesn't matter; we sort at lookup time.
+FUNNEL_GOAL_OVERRIDES = {
+    "X (Mike)":         [(date(2026, 7, 1), 13)],   # was 30/mo
+    "Anthony X":        [(date(2026, 7, 1), 10)],   # was None
+    "Anthony LinkedIn": [(date(2026, 7, 1), 15)],   # was None
+}
+
+
+def get_monthly_goal(funnel_name, base_goal, year, month):
+    """Return the monthly goal for a funnel in a given year/month, applying
+    any FUNNEL_GOAL_OVERRIDES tier that has taken effect by the first of that
+    month. Falls through to `base_goal` (from FUNNEL_CONFIG) when no override
+    applies."""
+    overrides = FUNNEL_GOAL_OVERRIDES.get(funnel_name)
+    if not overrides:
+        return base_goal
+    month_start = date(year, month, 1)
+    # Sort newest-first so the first match is the active tier.
+    for eff_date, goal in sorted(overrides, key=lambda x: x[0], reverse=True):
+        if month_start >= eff_date:
+            return goal
+    return base_goal
 
 
 # ─── Working Days Calculation ────────────────────────────────────────────────
@@ -1842,7 +1880,9 @@ def generate_rolling_html(team_data, team_detail=None):
     year, month = now_pacific.year, now_pacific.month
     daily_goal_map = {}
     for fc in FUNNEL_CONFIG:
-        dg = get_daily_goal(fc["monthly_goal"], year, month)
+        # Apply any date-effective overrides for this month before dividing by working days.
+        effective_monthly = get_monthly_goal(fc["name"], fc["monthly_goal"], year, month)
+        dg = get_daily_goal(effective_monthly, year, month)
         daily_goal_map[fc["name"]] = dg
 
     n_cols = len(dates)
@@ -2618,10 +2658,10 @@ CF_ICP             = "cf_OcYP2vXsG2tvbMDubwQNcidiqVegXa7CsyWkOR3f7KN"
 FUNNEL_SHORT = {
     "Low Ticket Funnel":        "LTF",
     "LTF - Quiz Funnel":        "LTF Quiz",
-    "Instagram":                "IG",
+    "Instagram (Mike)":         "IG (Mike)",
     "YouTube":                  "YT",
-    "X":                        "X",
-    "Linkedin":                 "LinkedIn",
+    "X (Mike)":                 "X (Mike)",
+    "Linkedin (Mike)":          "LinkedIn (Mike)",
     "Meta Ads":                 "Meta Ads",
     "VSL":                      "VSL",
     "Website":                  "Website",
@@ -2629,6 +2669,8 @@ FUNNEL_SHORT = {
     "Mike Newsletter":          "Newsletter",
     "AK TikTok":                "AK TT",
     "Anthony IG":               "Anthony IG",
+    "Anthony X":                "Anthony X",
+    "Anthony LinkedIn":         "Anthony LI",
     "Side Hustle Nation/WWWS":  "SHN/WWWS",
     "Passivepreneurs":          "Passivepreneurs",
     "Reactivation Email":       "Reactivation Email",
