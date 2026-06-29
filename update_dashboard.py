@@ -2640,14 +2640,26 @@ FUNNEL_SHORT = {
 
 
 def fetch_close_users():
-    """Fetch all Close org users and return a user_id → display name dict."""
+    """Fetch all Close org users and return a user_id → display name dict.
+    Paginates because Close caps /user/ responses at 100 per page; without the
+    loop, users sorted late alphabetically (Zac, etc.) fall off the end and get
+    rendered as raw user_id strings in the EOD email. (Same bug fix applied to
+    other internal dashboards — see 2026-06-26 issue.)"""
+    users = {}
+    skip = 0
     try:
-        data = close_get("user", {"_limit": 100})
-        return {u["id"]: u.get("display_name") or u.get("first_name", "Unknown")
-                for u in data.get("data", [])}
+        while True:
+            data = close_get("user", {"_skip": skip, "_limit": 100})
+            batch = data.get("data", [])
+            for u in batch:
+                users[u["id"]] = u.get("display_name") or u.get("first_name", "Unknown")
+            if not data.get("has_more", False):
+                break
+            skip += 100
+        return users
     except Exception as e:
         log(f"  ⚠ EOD email: Could not fetch Close users: {e}")
-        return {}
+        return users  # return whatever we did manage to fetch — partial is better than empty
 
 
 def fetch_todays_won_opps(today_str):
