@@ -515,7 +515,10 @@ FUNNEL_CONFIG = [
     {"name": "Instagram (Mike)",        "close_values": ["Instagram"],         "monthly_goal": 240, "section": "external"},
     {"name": "YouTube",                 "close_values": ["YouTube - OG - Cam"],"monthly_goal": 132, "section": "inhouse"},
     {"name": "X (Mike)",                "close_values": ["X"],                 "monthly_goal": 30,  "section": "external"},
-    {"name": "Linkedin (Mike)",         "close_values": ["Linkedin"],          "monthly_goal": 30,  "section": "external"},
+    # 2026-06-26: relabeled from "Linkedin (Mike)" — the LinkedIn brand is actually
+    # Anthony's (team confusion during initial funnel setup). Close still stores the
+    # value as plain "Linkedin"; only the dashboard label changed.
+    {"name": "Anthony LinkedIn",        "close_values": ["Linkedin"],          "monthly_goal": 30,  "section": "external"},
     {"name": "Meta Ads",                "close_values": ["Meta Ads"],          "monthly_goal": 44,  "section": "inhouse"},
     # ── In-House ──
     {"name": "VSL",                     "close_values": ["VSL"],               "monthly_goal": 110, "section": "inhouse"},
@@ -526,7 +529,8 @@ FUNNEL_CONFIG = [
     {"name": "AK TikTok",                "close_values": ["Tik Tok"],           "monthly_goal": 22, "section": "inhouse"},
     {"name": "Anthony IG",               "close_values": ["Anthony IG"],        "monthly_goal": 22, "section": "external"},
     {"name": "Anthony X",                "close_values": ["Anthony X"],         "monthly_goal": None, "section": "external"},
-    {"name": "Anthony LinkedIn",         "close_values": ["Anthony LinkedIn"],  "monthly_goal": None, "section": "external"},
+    # (No separate "Anthony LinkedIn" entry — that Close funnel was deleted after
+    # the team clarified the standard "Linkedin" funnel IS Anthony's. See relabel above.)
     {"name": "Side Hustle Nation/WWWS", "close_values": ["WWWS"],              "monthly_goal": 2,   "section": "inhouse"},
     {"name": "Passivepreneurs",         "close_values": ["Passivepreneurs"],   "monthly_goal": None, "section": "inhouse"},
     {"name": "Reactivation Email",      "close_values": ["Reactivation Email"],"monthly_goal": None, "section": "inhouse"},
@@ -2661,7 +2665,6 @@ FUNNEL_SHORT = {
     "Instagram (Mike)":         "IG (Mike)",
     "YouTube":                  "YT",
     "X (Mike)":                 "X (Mike)",
-    "Linkedin (Mike)":          "LinkedIn (Mike)",
     "Meta Ads":                 "Meta Ads",
     "VSL":                      "VSL",
     "Website":                  "Website",
