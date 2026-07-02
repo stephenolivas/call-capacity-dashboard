@@ -2656,6 +2656,11 @@ CF_LEAD_OWNER_NAME = "cf_gOfS9pFwext58oberEegLyix8hZzeHrxhCZOVh3P3rd"
 CF_SHOW_UP         = "cf_OPyvpU45RdvjLqfm8V1VWwNxrGKogEH2IBJmfCj0Uhq"
 CF_FUNNEL_DEAL     = "cf_xqDQE8fkPsWa0RNEve7hcaxKblCe6489XeZGRDzyPdX"
 CF_ICP             = "cf_OcYP2vXsG2tvbMDubwQNcidiqVegXa7CsyWkOR3f7KN"
+CF_LOST_REASON     = "cf_R4i05fLNOQP8yveAs4ofTMMYGAQnkLLklunP4lov2Bt"  # lead-level field; label is misleading
+
+# Label of the Close lead status that means "deal lost". If the label ever
+# changes in Close, update it here — we filter by string match on new_status_label.
+LOST_STATUS_LABEL  = "💔 Lost"
 
 # ── Short funnel labels for the email body ────────────────────────────────────
 
@@ -2724,6 +2729,50 @@ def fetch_todays_won_opps(today_str):
             break
         skip += 100
     return opps
+
+
+def fetch_todays_lost_leads(today):
+    """Fetch all leads that transitioned to 💔 Lost today (Pacific-day-bounded).
+    Mirrors the pattern in the lost_deals_digest.py sidecar script:
+      - Uses /activity/status_change/lead/ (not opportunity — Lost is a lead status)
+      - Filters new_status_label == LOST_STATUS_LABEL
+      - Deduplicates: a lead bouncing Lost → Open → Lost in one day counts once
+    Returns a list of {lead_id, changed_at} dicts, sorted by change time.
+    Empty list on any API error (logs the error; doesn't block the rest of the email).
+    """
+    # Convert today's PT day boundaries to UTC ISO strings for the API filter.
+    day_start_pt = datetime(today.year, today.month, today.day, tzinfo=PACIFIC)
+    day_end_pt   = day_start_pt + timedelta(days=1)
+    start_utc    = day_start_pt.astimezone(timezone.utc).isoformat()
+    end_utc      = day_end_pt.astimezone(timezone.utc).isoformat()
+
+    results = []
+    seen    = set()  # dedupe by lead_id
+    skip    = 0
+    try:
+        while True:
+            data = close_get("activity/status_change/lead", {
+                "date_created__gte": start_utc,
+                "date_created__lt":  end_utc,
+                "_limit":            100,
+                "_skip":             skip,
+            })
+            batch = data.get("data", [])
+            for sc in batch:
+                if sc.get("new_status_label") != LOST_STATUS_LABEL:
+                    continue
+                lid = sc.get("lead_id")
+                if not lid or lid in seen:
+                    continue
+                seen.add(lid)
+                results.append({"lead_id": lid, "changed_at": sc.get("date_created")})
+            if not data.get("has_more"):
+                break
+            skip += len(batch) or 100
+    except Exception as e:
+        log(f"  ⚠ EOD email: Could not fetch today's Lost status changes: {e}")
+        return []
+    return results
 
 
 def fetch_leads_for_email(lead_ids):
@@ -2819,6 +2868,28 @@ def build_eod_data(rolling_data, today):
         icp          = lead.get(f"custom.{CF_ICP}") or "Unknown"
         icp_lines.append(f"{funnel_label} / {icp}")
 
+    # ── Closed Lost — Lead / Reason ───────────────────────────────────────────
+    # Follows the pattern from the lost_deals_digest sidecar script, adapted to
+    # a same-day window (12:00 AM PT today → now). We pull the lead's
+    # display_name + Lost Reason with targeted fetches, since these leads are
+    # not necessarily in the meetings/won-opps set that email_leads covers.
+    lost_status_changes = fetch_todays_lost_leads(today)
+    lost_lines          = []  # list of {name, reason, url}
+    for sc in lost_status_changes:
+        lid = sc["lead_id"]
+        try:
+            lead = close_get(f"lead/{lid}", {"_fields": f"id,display_name,name,custom.{CF_LOST_REASON}"})
+        except Exception as e:
+            log(f"  ⚠ EOD email: Could not fetch lost lead {lid}: {e}")
+            continue
+        lost_lines.append({
+            "name":   lead.get("display_name") or lead.get("name") or "(no name)",
+            "reason": (lead.get(f"custom.{CF_LOST_REASON}") or "").strip() or "No reason given",
+            "url":    f"https://app.close.com/lead/{lid}/",
+        })
+    # Sort: "No reason given" to the bottom, then by reason alpha, then by name
+    lost_lines.sort(key=lambda x: (x["reason"] == "No reason given", x["reason"].lower(), x["name"].lower()))
+
     return {
         "today":          today,
         "today_count":    today_count,
@@ -2828,6 +2899,7 @@ def build_eod_data(rolling_data, today):
         "revenue":        total_revenue,
         "closer_counts":  closer_counts,
         "icp_lines":      icp_lines,
+        "lost_lines":     lost_lines,
     }
 
 
@@ -2858,6 +2930,12 @@ def format_eod_email(data):
         if data["icp_lines"] else "* None"
     )
 
+    # Lost lines — "Lead Name — Reason"
+    lost_lines_plain = (
+        "\n".join(f"* {l['name']} — {l['reason']}" for l in data["lost_lines"])
+        if data["lost_lines"] else "* None"
+    )
+
     subject = f"EOD Stats {date_str}"
 
     # ── Plain text ────────────────────────────────────────────────────────────
@@ -2869,14 +2947,28 @@ def format_eod_email(data):
         f"New Meetings Today:        {data['today_count']}\n"
         f"Show Rate:                 {data['show_rate']:.0f}%\n"
         f"Meetings Set for Tomorrow: {data['tomorrow_count']}\n\n"
-        f"Closed won funnel / ICP:\n{icp_lines_plain}\n"
+        f"Closed won funnel / ICP:\n{icp_lines_plain}\n\n"
+        f"Closed lost — lead / reason:\n{lost_lines_plain}\n"
     )
 
     # ── HTML ──────────────────────────────────────────────────────────────────
+    def _esc(s):
+        # Minimal HTML escape for user-entered strings (lead name, lost reason).
+        return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
     icp_rows = "".join(
         f'<tr><td style="padding:6px 0;border-bottom:1px solid #f0f0f0;color:#333;font-size:14px;">📌 {line}</td></tr>'
         for line in data["icp_lines"]
     ) if data["icp_lines"] else '<tr><td style="padding:6px 0;color:#999;font-size:14px;">None</td></tr>'
+
+    lost_rows = "".join(
+        f'<tr><td style="padding:6px 0;border-bottom:1px solid #f0f0f0;color:#333;font-size:14px;">'
+        f'💔 <a href="{l["url"]}" style="color:#333;text-decoration:none;">{_esc(l["name"])}</a> '
+        f'<span style="color:#999;"> — </span>'
+        f'<span style="color:#666;">{_esc(l["reason"])}</span>'
+        f'</td></tr>'
+        for l in data["lost_lines"]
+    ) if data["lost_lines"] else '<tr><td style="padding:6px 0;color:#999;font-size:14px;">None</td></tr>'
 
     def stat_row(label, value, value_color="#1a1a1a"):
         return f"""
@@ -2916,11 +3008,22 @@ def format_eod_email(data):
         <!-- Divider -->
         <tr><td style="background:#ffffff;padding:0 28px;"><hr style="border:none;border-top:1px solid #ececec;margin:0;"></td></tr>
 
-        <!-- ICP block -->
-        <tr><td style="background:#ffffff;padding:20px 28px 28px;border-radius:0 0 8px 8px;">
+        <!-- Closed Won block -->
+        <tr><td style="background:#ffffff;padding:20px 28px;">
           <p style="margin:0 0 12px;font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#1b5e1b;border-left:3px solid #1b5e1b;padding-left:8px;">CLOSED WON — FUNNEL / ICP</p>
           <table width="100%" cellpadding="0" cellspacing="0">
             {icp_rows}
+          </table>
+        </td></tr>
+
+        <!-- Divider -->
+        <tr><td style="background:#ffffff;padding:0 28px;"><hr style="border:none;border-top:1px solid #ececec;margin:0;"></td></tr>
+
+        <!-- Closed Lost block -->
+        <tr><td style="background:#ffffff;padding:20px 28px 28px;border-radius:0 0 8px 8px;">
+          <p style="margin:0 0 12px;font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#a02929;border-left:3px solid #a02929;padding-left:8px;">CLOSED LOST — LEAD / REASON</p>
+          <table width="100%" cellpadding="0" cellspacing="0">
+            {lost_rows}
           </table>
         </td></tr>
 
