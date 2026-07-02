@@ -1,0 +1,30 @@
+name: Test EOD Email
+
+# One-shot manual trigger to preview the EOD email before the 8 PM PT live send.
+# Sends only to TEST_EMAIL_TO — configure that as a repo secret with your email.
+# Does not commit or write anything else; strictly a preview.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Send EOD email preview
+        env:
+          CLOSE_API_KEY:      ${{ secrets.CLOSE_API_KEY }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          EMAIL_FROM:         ${{ secrets.EMAIL_FROM }}
+          TEST_EMAIL_TO:      ${{ secrets.TEST_EMAIL_TO }}
+        run: python test_eod_email.py
