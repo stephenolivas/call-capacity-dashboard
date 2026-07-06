@@ -2910,11 +2910,21 @@ def build_eod_data(rolling_data, today):
         lost_by_reason.setdefault(reason, {}).setdefault(funnel_full, 0)
         lost_by_reason[reason][funnel_full] += 1
     # Sort: "No reason given" to the bottom, then by reason alpha, then by name
-    # Sort reasons: highest count first, then reason alpha; "No reason given" pinned to bottom.
+    # Sort reasons: normal reasons by count desc (then alpha), with two "sink"
+    # categories forced to the bottom — "Unresponsive" is low signal for the team,
+    # and "No reason given" is even less useful. Order: normal → Unresponsive → No reason.
     def _lost_sort_key(item):
         reason, funnels = item
         total = sum(funnels.values())
-        return (reason == "No reason given", -total, reason.lower())
+        reason_lower = reason.lower().strip()
+        # sink_order: 0 = normal, 1 = Unresponsive, 2 = No reason given
+        if reason_lower == "no reason given":
+            sink = 2
+        elif reason_lower.startswith("unresponsive"):
+            sink = 1
+        else:
+            sink = 0
+        return (sink, -total, reason_lower)
 
     lost_groups = []  # ordered [{reason, total, funnels: [(name, count), ...]}]
     for reason, funnels in sorted(lost_by_reason.items(), key=_lost_sort_key):
@@ -3035,12 +3045,17 @@ def format_eod_email(data):
 
     # Rep breakdown rows — NEW / F/U+R / TOT columns. Clamped reps show "—" in F/U+R.
     if data["rep_breakdown_today"]:
+        # Header styling — shared across all label cells (mixed-case labels, right-aligned).
+        _header_td = (
+            'padding:6px 8px 4px;color:#888;font-size:11px;font-weight:700;'
+            'letter-spacing:0.02em;border-bottom:1px solid #e5e5e5;text-align:right;'
+        )
         rep_header = (
             '<tr>'
-            '<td style="padding:6px 0 4px;color:#888;font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;border-bottom:1px solid #e5e5e5;"></td>'
-            '<td style="padding:6px 0 4px;color:#888;font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;text-align:right;border-bottom:1px solid #e5e5e5;width:52px;">NEW</td>'
-            '<td style="padding:6px 0 4px;color:#888;font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;text-align:right;border-bottom:1px solid #e5e5e5;width:52px;">F/U+R</td>'
-            '<td style="padding:6px 0 4px;color:#888;font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;text-align:right;border-bottom:1px solid #e5e5e5;width:52px;">TOT</td>'
+            f'<td style="{_header_td}text-align:left;padding-left:0;"></td>'
+            f'<td style="{_header_td}width:70px;">New</td>'
+            f'<td style="{_header_td}width:150px;">F/Us &amp; Reschedules</td>'
+            f'<td style="{_header_td}width:70px;padding-right:0;">Total</td>'
             '</tr>'
         )
         rep_body_rows = []
@@ -3052,8 +3067,8 @@ def format_eod_email(data):
             rep_body_rows.append(
                 '<tr>'
                 f'<td style="padding:5px 0;border-bottom:1px solid #f5f5f5;color:#333;font-size:13px;">{_esc(name)}</td>'
-                f'<td style="padding:5px 0;border-bottom:1px solid #f5f5f5;color:{new_color};font-size:13px;font-weight:700;text-align:right;">{new}</td>'
-                f'<td style="padding:5px 0;border-bottom:1px solid #f5f5f5;color:{fu_r_color};font-size:13px;text-align:right;">{fu_r_display}</td>'
+                f'<td style="padding:5px 8px;border-bottom:1px solid #f5f5f5;color:{new_color};font-size:13px;font-weight:700;text-align:right;">{new}</td>'
+                f'<td style="padding:5px 8px;border-bottom:1px solid #f5f5f5;color:{fu_r_color};font-size:13px;text-align:right;">{fu_r_display}</td>'
                 f'<td style="padding:5px 0;border-bottom:1px solid #f5f5f5;color:{tot_color};font-size:13px;text-align:right;">{tot}</td>'
                 '</tr>'
             )
@@ -3062,21 +3077,28 @@ def format_eod_email(data):
         rep_rows = '<tr><td style="padding:6px 0;color:#999;font-size:14px;">No calls today</td></tr>'
 
     # Lost rows — grouped by reason, then funnel breakdown inside each group.
+    # Style matches other email sections: reason header row + indented funnel rows,
+    # with a light-grey separator at the end of each group (last group has no separator).
     if data["lost_groups"]:
         lost_row_parts = []
         for i, g in enumerate(data["lost_groups"]):
-            # Reason header — dim red pill matching CLOSED LOST section theme.
+            is_last_group = i == len(data["lost_groups"]) - 1
+            # Reason row: bold dark-red label + subtle count.
             top_padding = "10px" if i > 0 else "0"
             lost_row_parts.append(
-                f'<tr><td style="padding:{top_padding} 0 6px;">'
-                f'<span style="display:inline-block;background:#fbe9e9;color:#a02929;font-size:12px;font-weight:700;padding:5px 10px;border-radius:4px;">'
-                f'{_esc(g["reason"])} <span style="opacity:0.7;font-weight:500;">· {g["total"]}</span>'
-                f'</span>'
+                f'<tr><td style="padding:{top_padding} 0 4px;color:#a02929;font-size:13px;font-weight:700;">'
+                f'{_esc(g["reason"])} <span style="color:#c78888;font-weight:500;">· {g["total"]}</span>'
                 f'</td></tr>'
             )
-            for funnel, count in g["funnels"]:
+            # Funnel rows: indented, grey text. Last row of the group gets border-bottom
+            # (unless this is the last group in the section — then omit for cleanliness).
+            last_idx = len(g["funnels"]) - 1
+            for j, (funnel, count) in enumerate(g["funnels"]):
+                is_last_funnel = j == last_idx
+                bottom_pad     = "8px" if is_last_funnel else "3px"
+                border         = "" if (is_last_group and is_last_funnel) else "border-bottom:1px solid #f0f0f0;"
                 lost_row_parts.append(
-                    f'<tr><td style="padding:3px 0 3px 16px;color:#555;font-size:13px;">'
+                    f'<tr><td style="padding:3px 0 {bottom_pad} 16px;color:#555;font-size:13px;{border}">'
                     f'{_esc(funnel)} <span style="color:#888;">× {count}</span>'
                     f'</td></tr>'
                 )
