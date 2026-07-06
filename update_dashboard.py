@@ -1102,6 +1102,54 @@ def fetch_rep_total_meetings(start_date, end_date, all_lane_user_ids, lead_to_fu
     return rep_totals, rep_categories, non_new_meetings
 
 
+def aggregate_rep_breakdown_for_date(reps_uid_counter, rep_total_meetings, rep_meetings_by_category,
+                                     lane_rep_names, target_date):
+    """Build the per-rep [name, new, fu_resch, total, is_clamped] list for a single date.
+
+    Extracted from build_day_detail so the EOD email can render the exact same
+    rep breakdown as the live dashboard panel — single source of math truth.
+
+    Args:
+      reps_uid_counter: Counter({user_id: new_call_count}) for target_date. Can be empty.
+      rep_total_meetings: {user_id: {date: count}} — clamp already applied.
+      rep_meetings_by_category: {user_id: {date: {fu, resch}}} — clamp already applied.
+      lane_rep_names: {user_id: display_name} — reps not in this dict collapse into "Other".
+      target_date: date object.
+
+    Returns: sorted list of [name, new, fu_resch, total, is_clamped] entries with
+      any activity on that day. Sort: NEW desc, then name asc.
+    """
+    reps_uid_counter          = reps_uid_counter or {}
+    rep_total_meetings        = rep_total_meetings or {}
+    rep_meetings_by_category  = rep_meetings_by_category or {}
+
+    # Every rep with ANY activity on this day (new OR non-new).
+    active_uids = set(reps_uid_counter.keys())
+    for uid, dates_dict in rep_total_meetings.items():
+        if dates_dict.get(target_date, 0) > 0:
+            active_uids.add(uid)
+
+    # Aggregate by display name so unknown user_ids collapse into "Other".
+    rep_agg = {}  # display_name -> [new, fu_resch, total, is_clamped]
+    for uid in active_uids:
+        new_count   = reps_uid_counter.get(uid, 0)
+        cat         = rep_meetings_by_category.get(uid, {}).get(target_date, {})
+        fu_resch    = cat.get("fu", 0) + cat.get("resch", 0)
+        rep_total   = rep_total_meetings.get(uid, {}).get(target_date, 0)
+        name        = lane_rep_names.get(uid, "Other")
+        if name not in rep_agg:
+            rep_agg[name] = [0, 0, 0, False]
+        rep_agg[name][0] += new_count
+        rep_agg[name][1] += fu_resch
+        rep_agg[name][2] += rep_total
+        if uid in NEW_CALLS_ONLY_REPS:
+            rep_agg[name][3] = True
+
+    rep_list = [[name, v[0], v[1], v[2], v[3]] for name, v in rep_agg.items() if v[0]+v[1]+v[2] > 0]
+    rep_list.sort(key=lambda r: (-r[1], r[0]))
+    return rep_list
+
+
 def build_day_detail(valid_meetings, booking_dates, lane_rep_names, meeting_titles=None, non_new_meetings_by_date=None,
                      rep_total_meetings=None, rep_meetings_by_category=None):
     """Build per-day detail data for the day detail panel.
@@ -1166,37 +1214,11 @@ def build_day_detail(valid_meetings, booking_dates, lane_rep_names, meeting_titl
             continue
 
         # ── Per-rep New / F/U+Resch / Total breakdown ──────────────────────────
-        # Pulls together every rep with ANY activity on this day (new OR non-new),
-        # keyed by user_id then aggregated by display name (so unknown user_ids
-        # collapse into a single "Other" row). NEW_CALLS_ONLY_REPS already had
-        # their fu/resch zeroed and total clamped inside build_dashboard_data,
-        # so those values flow through correctly here — and we tag the entry as
-        # clamped so the JS can render "—" instead of "0" for the non-new column.
-        active_uids = set(data["reps_uid"].keys())
-        for uid, dates_dict in rep_total_meetings.items():
-            if dates_dict.get(d_obj, 0) > 0:
-                active_uids.add(uid)
-
-        rep_agg = {}  # display_name -> [new, fu_resch, total, is_clamped]
-        for uid in active_uids:
-            new_count   = data["reps_uid"].get(uid, 0)
-            cat         = rep_meetings_by_category.get(uid, {}).get(d_obj, {})
-            fu_resch    = cat.get("fu", 0) + cat.get("resch", 0)
-            rep_total   = rep_total_meetings.get(uid, {}).get(d_obj, 0)
-            name        = lane_rep_names.get(uid, "Other")
-            if name not in rep_agg:
-                rep_agg[name] = [0, 0, 0, False]
-            rep_agg[name][0] += new_count
-            rep_agg[name][1] += fu_resch
-            rep_agg[name][2] += rep_total
-            if uid in NEW_CALLS_ONLY_REPS:
-                rep_agg[name][3] = True
-
-        # Only include reps with any activity; sort by new desc, then name asc.
-        rep_list = [[name, vals[0], vals[1], vals[2], vals[3]]
-                    for name, vals in rep_agg.items()
-                    if vals[0] + vals[1] + vals[2] > 0]
-        rep_list.sort(key=lambda r: (-r[1], r[0]))
+        # Same helper the EOD email uses — single source of math truth.
+        rep_list = aggregate_rep_breakdown_for_date(
+            data["reps_uid"], rep_total_meetings, rep_meetings_by_category,
+            lane_rep_names, d_obj,
+        )
 
         # Funnels: top 4 + Other (handle day with 0 valid_meetings — no funnel breakdown)
         if total > 0:
@@ -2866,38 +2888,73 @@ def build_eod_data(rolling_data, today):
         icp          = lead.get(f"custom.{CF_ICP}") or "Unknown"
         icp_lines.append(f"{funnel_label} / {icp}")
 
-    # ── Closed Lost — Lead / Reason ───────────────────────────────────────────
-    # Follows the pattern from the lost_deals_digest sidecar script, adapted to
-    # a same-day window (12:00 AM PT today → now). We pull the lead's
-    # display_name + Lost Reason with targeted fetches, since these leads are
-    # not necessarily in the meetings/won-opps set that email_leads covers.
+    # ── Closed Lost — bucketed by Reason → Funnel ─────────────────────────────
+    # For each lead that transitioned to 💔 Lost today, fetch:
+    #   - Lost Reason (from the lead custom field)
+    #   - Funnel Name (mapped through CLOSE_VALUE_TO_FUNNEL to match dashboard display)
+    # Then aggregate as {reason: {funnel: count}}.
     lost_status_changes = fetch_todays_lost_leads(today)
-    lost_lines          = []  # list of {name, reason, url}
+    lost_by_reason      = {}  # reason -> {funnel: count}
     for sc in lost_status_changes:
         lid = sc["lead_id"]
         try:
-            lead = close_get(f"lead/{lid}", {"_fields": f"id,display_name,name,custom.{CF_LOST_REASON}"})
+            lead = close_get(f"lead/{lid}", {
+                "_fields": f"id,display_name,name,custom.{CF_LOST_REASON},custom.{CF_FUNNEL_DEAL}"
+            })
         except Exception as e:
             log(f"  ⚠ EOD email: Could not fetch lost lead {lid}: {e}")
             continue
-        lost_lines.append({
-            "name":   lead.get("display_name") or lead.get("name") or "(no name)",
-            "reason": (lead.get(f"custom.{CF_LOST_REASON}") or "").strip() or "No reason given",
-            "url":    f"https://app.close.com/lead/{lid}/",
-        })
+        reason      = (lead.get(f"custom.{CF_LOST_REASON}") or "").strip() or "No reason given"
+        raw_funnel  = lead.get(f"custom.{CF_FUNNEL_DEAL}") or ""
+        funnel_full = CLOSE_VALUE_TO_FUNNEL.get(raw_funnel, raw_funnel) or "Unknown"
+        lost_by_reason.setdefault(reason, {}).setdefault(funnel_full, 0)
+        lost_by_reason[reason][funnel_full] += 1
     # Sort: "No reason given" to the bottom, then by reason alpha, then by name
-    lost_lines.sort(key=lambda x: (x["reason"] == "No reason given", x["reason"].lower(), x["name"].lower()))
+    # Sort reasons: highest count first, then reason alpha; "No reason given" pinned to bottom.
+    def _lost_sort_key(item):
+        reason, funnels = item
+        total = sum(funnels.values())
+        return (reason == "No reason given", -total, reason.lower())
+
+    lost_groups = []  # ordered [{reason, total, funnels: [(name, count), ...]}]
+    for reason, funnels in sorted(lost_by_reason.items(), key=_lost_sort_key):
+        # Within each reason: funnels sorted alpha
+        funnel_list = sorted(funnels.items(), key=lambda x: x[0].lower())
+        lost_groups.append({
+            "reason":  reason,
+            "total":   sum(funnels.values()),
+            "funnels": funnel_list,
+        })
+
+    # ── Today's Calls By Rep ──────────────────────────────────────────────────
+    # Same helper the live dashboard panel uses. Reuses rep data attached to
+    # rolling_data by main() (see the team_data["rep_total_meetings"] = ... lines).
+    from collections import Counter
+    reps_uid_today = Counter()
+    for m in rolling_data.get("valid_meetings", []):
+        if m.get("date") == today:
+            uid = m.get("lead_owner", "")
+            reps_uid_today[uid] += 1
+
+    rep_breakdown_today = aggregate_rep_breakdown_for_date(
+        reps_uid_today,
+        rolling_data.get("rep_total_meetings"),
+        rolling_data.get("rep_meetings_by_category"),
+        ALL_LANE_REP_NAMES,
+        today,
+    )
 
     return {
-        "today":          today,
-        "today_count":    today_count,
-        "tomorrow_count": tomorrow_count,
-        "show_rate":      show_rate,
-        "deals":          len(won_opps),
-        "revenue":        total_revenue,
-        "closer_counts":  closer_counts,
-        "icp_lines":      icp_lines,
-        "lost_lines":     lost_lines,
+        "today":               today,
+        "today_count":         today_count,
+        "tomorrow_count":      tomorrow_count,
+        "show_rate":           show_rate,
+        "deals":               len(won_opps),
+        "revenue":             total_revenue,
+        "closer_counts":       closer_counts,
+        "icp_lines":           icp_lines,
+        "lost_groups":         lost_groups,
+        "rep_breakdown_today": rep_breakdown_today,  # [[name, new, fu_r, tot, is_clamped], ...]
     }
 
 
@@ -2928,11 +2985,27 @@ def format_eod_email(data):
         if data["icp_lines"] else "* None"
     )
 
-    # Lost lines — "Lead Name — Reason"
-    lost_lines_plain = (
-        "\n".join(f"* {l['name']} — {l['reason']}" for l in data["lost_lines"])
-        if data["lost_lines"] else "* None"
-    )
+    # Rep breakdown plain — "Name   NEW=X  F/U+R=Y  TOT=Z" (dash for clamped reps)
+    if data["rep_breakdown_today"]:
+        rep_lines = []
+        name_w = max(len(r[0]) for r in data["rep_breakdown_today"])
+        for name, new, fu_r, tot, is_clamped in data["rep_breakdown_today"]:
+            fu_r_display = "—" if is_clamped else str(fu_r)
+            rep_lines.append(f"* {name:<{name_w}}  NEW={new}  F/U+R={fu_r_display}  TOT={tot}")
+        rep_breakdown_plain = "\n".join(rep_lines)
+    else:
+        rep_breakdown_plain = "* No calls today"
+
+    # Lost groups plain — "Reason: [Funnel x N]"
+    if data["lost_groups"]:
+        lost_lines_plain_parts = []
+        for g in data["lost_groups"]:
+            lost_lines_plain_parts.append(f"* {g['reason']} ({g['total']})")
+            for funnel, count in g["funnels"]:
+                lost_lines_plain_parts.append(f"    - {funnel} x {count}")
+        lost_lines_plain = "\n".join(lost_lines_plain_parts)
+    else:
+        lost_lines_plain = "* None"
 
     subject = f"EOD Stats {date_str}"
 
@@ -2945,8 +3018,9 @@ def format_eod_email(data):
         f"New Meetings Today:        {data['today_count']}\n"
         f"Show Rate:                 {data['show_rate']:.0f}%\n"
         f"Meetings Set for Tomorrow: {data['tomorrow_count']}\n\n"
+        f"Today's calls by rep:\n{rep_breakdown_plain}\n\n"
         f"Closed won funnel / ICP:\n{icp_lines_plain}\n\n"
-        f"Closed lost — lead / reason:\n{lost_lines_plain}\n"
+        f"Closed lost — reason / funnel:\n{lost_lines_plain}\n"
     )
 
     # ── HTML ──────────────────────────────────────────────────────────────────
@@ -2959,14 +3033,56 @@ def format_eod_email(data):
         for line in data["icp_lines"]
     ) if data["icp_lines"] else '<tr><td style="padding:6px 0;color:#999;font-size:14px;">None</td></tr>'
 
-    lost_rows = "".join(
-        f'<tr><td style="padding:6px 0;border-bottom:1px solid #f0f0f0;color:#333;font-size:14px;">'
-        f'💔 <a href="{l["url"]}" style="color:#333;text-decoration:none;">{_esc(l["name"])}</a> '
-        f'<span style="color:#999;"> — </span>'
-        f'<span style="color:#666;">{_esc(l["reason"])}</span>'
-        f'</td></tr>'
-        for l in data["lost_lines"]
-    ) if data["lost_lines"] else '<tr><td style="padding:6px 0;color:#999;font-size:14px;">None</td></tr>'
+    # Rep breakdown rows — NEW / F/U+R / TOT columns. Clamped reps show "—" in F/U+R.
+    if data["rep_breakdown_today"]:
+        rep_header = (
+            '<tr>'
+            '<td style="padding:6px 0 4px;color:#888;font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;border-bottom:1px solid #e5e5e5;"></td>'
+            '<td style="padding:6px 0 4px;color:#888;font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;text-align:right;border-bottom:1px solid #e5e5e5;width:52px;">NEW</td>'
+            '<td style="padding:6px 0 4px;color:#888;font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;text-align:right;border-bottom:1px solid #e5e5e5;width:52px;">F/U+R</td>'
+            '<td style="padding:6px 0 4px;color:#888;font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;text-align:right;border-bottom:1px solid #e5e5e5;width:52px;">TOT</td>'
+            '</tr>'
+        )
+        rep_body_rows = []
+        for name, new, fu_r, tot, is_clamped in data["rep_breakdown_today"]:
+            fu_r_display = "—" if is_clamped else str(fu_r)
+            fu_r_color   = "#999" if is_clamped else ("#bbb" if fu_r == 0 else "#333")
+            new_color    = "#bbb" if new == 0 else "#1b7a2e"
+            tot_color    = "#bbb" if tot == 0 else "#333"
+            rep_body_rows.append(
+                '<tr>'
+                f'<td style="padding:5px 0;border-bottom:1px solid #f5f5f5;color:#333;font-size:13px;">{_esc(name)}</td>'
+                f'<td style="padding:5px 0;border-bottom:1px solid #f5f5f5;color:{new_color};font-size:13px;font-weight:700;text-align:right;">{new}</td>'
+                f'<td style="padding:5px 0;border-bottom:1px solid #f5f5f5;color:{fu_r_color};font-size:13px;text-align:right;">{fu_r_display}</td>'
+                f'<td style="padding:5px 0;border-bottom:1px solid #f5f5f5;color:{tot_color};font-size:13px;text-align:right;">{tot}</td>'
+                '</tr>'
+            )
+        rep_rows = rep_header + "".join(rep_body_rows)
+    else:
+        rep_rows = '<tr><td style="padding:6px 0;color:#999;font-size:14px;">No calls today</td></tr>'
+
+    # Lost rows — grouped by reason, then funnel breakdown inside each group.
+    if data["lost_groups"]:
+        lost_row_parts = []
+        for i, g in enumerate(data["lost_groups"]):
+            # Reason header — dim red pill matching CLOSED LOST section theme.
+            top_padding = "10px" if i > 0 else "0"
+            lost_row_parts.append(
+                f'<tr><td style="padding:{top_padding} 0 6px;">'
+                f'<span style="display:inline-block;background:#fbe9e9;color:#a02929;font-size:12px;font-weight:700;padding:5px 10px;border-radius:4px;">'
+                f'{_esc(g["reason"])} <span style="opacity:0.7;font-weight:500;">· {g["total"]}</span>'
+                f'</span>'
+                f'</td></tr>'
+            )
+            for funnel, count in g["funnels"]:
+                lost_row_parts.append(
+                    f'<tr><td style="padding:3px 0 3px 16px;color:#555;font-size:13px;">'
+                    f'{_esc(funnel)} <span style="color:#888;">× {count}</span>'
+                    f'</td></tr>'
+                )
+        lost_rows = "".join(lost_row_parts)
+    else:
+        lost_rows = '<tr><td style="padding:6px 0;color:#999;font-size:14px;">None</td></tr>'
 
     def stat_row(label, value, value_color="#1a1a1a"):
         return f"""
@@ -3000,6 +3116,17 @@ def format_eod_email(data):
             {stat_row("📅 New Meetings Today", str(data['today_count']))}
             {stat_row("✅ Show Rate", f"{data['show_rate']:.0f}%")}
             {stat_row("📆 Meetings Set for Tomorrow", str(data['tomorrow_count']))}
+          </table>
+        </td></tr>
+
+        <!-- Divider -->
+        <tr><td style="background:#ffffff;padding:0 28px;"><hr style="border:none;border-top:1px solid #ececec;margin:0;"></td></tr>
+
+        <!-- Today's Calls By Rep block -->
+        <tr><td style="background:#ffffff;padding:20px 28px;">
+          <p style="margin:0 0 12px;font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#1b5e1b;border-left:3px solid #1b5e1b;padding-left:8px;">TODAY'S CALLS — BY REP</p>
+          <table width="100%" cellpadding="0" cellspacing="0">
+            {rep_rows}
           </table>
         </td></tr>
 
@@ -3289,6 +3416,11 @@ def main():
     log("── Team meeting booking dates + calendar source ──")
     booking_dates, meeting_titles = fetch_meeting_booking_dates(team_data["valid_meetings"])
     team_detail = build_day_detail(team_data["valid_meetings"], booking_dates, ALL_LANE_REP_NAMES, meeting_titles=meeting_titles, non_new_meetings_by_date=non_new_meetings_by_date, rep_total_meetings=rep_total_meetings, rep_meetings_by_category=rep_meetings_by_category)
+
+    # Attach rep data to team_data so the EOD email can compute today's rep breakdown
+    # using the same aggregate_rep_breakdown_for_date helper as the live dashboard panel.
+    team_data["rep_total_meetings"]       = rep_total_meetings
+    team_data["rep_meetings_by_category"] = rep_meetings_by_category
 
     html = generate_rolling_html(team_data, team_detail=team_detail)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f: f.write(html)
