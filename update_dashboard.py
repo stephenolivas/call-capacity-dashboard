@@ -281,12 +281,10 @@ LANE_2_REPS = {
 LANE_2_REP_NAMES = {
     "user_Bov31jjnHhENBy8uWNTTL8KKax8VX7o6DugLzBYOHBG": "Lyle Hubbard",
     "user_WquWudQN7dghZsAPiNY80eJUmg1EadQg2UCQdvgbif7": "Kelly Schrader",
-    "user_I0cHZ04mBXXBvbFcnwmsc2KrcMsLsKxqjW8DtJ783Hr": "Elvis Ellis",
-    "user_5pAfnzGONQLUVLKqFQVpQ3570YV1gurVCTp1MMgfCDL": "John Kirk",
-    "user_UpJb11fzX2TuFHf7fFyWpfXr84lg2Ui7i7p5CtQkIaW": "Cameron Caswell",
     "user_MrBLkl5wCqTm7QxHxPo2ydNV5KxMllg6YZDVc12Aqzj": "Jason Aaron",
     # Bryan Barcus and Steven Starnes removed from rep details (no longer with company) — user_ids retained in LANE_2_REPS so historical calls still count
     # "LTF Quiz Calendar - General" (user_pKEujUcHJfsEyI5lM6L56aXM2s5nNOU994JRjRSlAdA, Chris Wanke's repurposed calendar) removed from rep details 2026-06-18 — user_id retained in LANE_2_REPS so historical calls still count
+    # John Kirk (user_5pAfnzGONQLUVLKqFQVpQ3570YV1gurVCTp1MMgfCDL), Elvis Ellis (user_I0cHZ04mBXXBvbFcnwmsc2KrcMsLsKxqjW8DtJ783Hr), and Cameron Caswell (user_UpJb11fzX2TuFHf7fFyWpfXr84lg2Ui7i7p5CtQkIaW) removed from rep details 2026-07-08 — no longer with company; user_ids retained in LANE_2_REPS + NEW_CALLS_ONLY_REPS (for Elvis / Cameron) so historical call counting & clamp behavior stay consistent
 }
 LANE_2_LEAD = "user_MrBLkl5wCqTm7QxHxPo2ydNV5KxMllg6YZDVc12Aqzj"  # Jason Aaron
 
