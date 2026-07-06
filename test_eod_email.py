@@ -48,8 +48,11 @@ if not ud.EMAIL_FROM:
 
 def build_minimal_rolling_data(today):
     """Build the smallest possible rolling_data dict that satisfies build_eod_data.
-    We only need today + tomorrow's booked counts, and today's lead IDs (for the
-    show rate calc). Everything else in build_eod_data comes from separate fetches
+    We need:
+      - Today + tomorrow's booked counts (for the numbers table)
+      - Today's lead IDs, with lead_owner (for show rate + per-rep new-call counts)
+      - rep_total_meetings + rep_meetings_by_category (for the by-rep breakdown)
+    Everything else comes from separate targeted fetches inside build_eod_data
     (won opps, lost status changes, per-lead show_up data)."""
     tomorrow      = today + timedelta(days=1)
     day_after     = today + timedelta(days=2)
@@ -61,7 +64,9 @@ def build_minimal_rolling_data(today):
     # Bucket by FSCBD date. Field-based counting (matches the dashboard exactly).
     from datetime import date as _date
     daily = {today: {"booked": 0}, tomorrow: {"booked": 0}}
-    valid_meetings = []
+    valid_meetings   = []
+    lead_to_funnel   = {}
+    leads_with_fscbd = set()
 
     for lead in field_leads:
         if lead.get("status_id") in ud.EXCLUDED_LEAD_STATUS_IDS:
@@ -76,17 +81,48 @@ def build_minimal_rolling_data(today):
             fscbd = _date.fromisoformat(fscbd_str)
         except (ValueError, TypeError):
             continue
-        if fscbd == today:
-            daily[today]["booked"] += 1
-            valid_meetings.append({"lead_id": lead["id"], "date": today})
-        elif fscbd == tomorrow:
-            daily[tomorrow]["booked"] += 1
-            valid_meetings.append({"lead_id": lead["id"], "date": tomorrow})
+        if fscbd not in (today, tomorrow):
+            continue
+        daily[fscbd]["booked"] += 1
+        # Note: valid_meetings needs "lead_owner" for the by-rep new-call counter.
+        valid_meetings.append({
+            "lead_id":    lead["id"],
+            "date":       fscbd,
+            "lead_owner": owner_id,
+        })
+        # For fetch_rep_total_meetings — same lookup dicts main() builds
+        lead_to_funnel[lead["id"]]      = lead.get(ud.FIELD_FUNNEL_NAME_DEAL) or ""
+        leads_with_fscbd.add((lead["id"], fscbd))
 
     print(f"   ✓ Today ({today}) booked: {daily[today]['booked']}")
     print(f"   ✓ Tomorrow ({tomorrow}) booked: {daily[tomorrow]['booked']}")
 
-    return {"daily_data": daily, "valid_meetings": valid_meetings}
+    # Fetch rep data for today only — the by-rep breakdown section needs it.
+    print(f"📥 Fetching per-rep meetings for the by-rep section (today: {today})…")
+    rep_total_meetings, rep_meetings_by_category, _non_new = ud.fetch_rep_total_meetings(
+        today, tomorrow, ud.ALL_LANE_REPS, lead_to_funnel, leads_with_fscbd
+    )
+    # Apply the NEW_CALLS_ONLY_REPS clamp — mirrors what build_dashboard_data does.
+    # Without this, the preview would over-count self-sourcing reps.
+    for uid in ud.NEW_CALLS_ONLY_REPS:
+        if uid not in rep_total_meetings:
+            continue
+        for d, _tot in list(rep_total_meetings[uid].items()):
+            # Their total collapses to their new-call count
+            new_count_that_day = sum(
+                1 for m in valid_meetings
+                if m["date"] == d and m["lead_owner"] == uid
+            )
+            rep_total_meetings[uid][d] = new_count_that_day
+            if uid in rep_meetings_by_category and d in rep_meetings_by_category[uid]:
+                rep_meetings_by_category[uid][d] = {"fu": 0, "resch": 0}
+
+    return {
+        "daily_data":               daily,
+        "valid_meetings":           valid_meetings,
+        "rep_total_meetings":       rep_total_meetings,
+        "rep_meetings_by_category": rep_meetings_by_category,
+    }
 
 
 def main():
