@@ -3428,10 +3428,6 @@ def main():
 
     save_capacity_cache(max_cache)
 
-    # Build all-reps data for EOD email (no lane filter — counts all sales calls)
-    log("\n── All Reps (EOD email) ──")
-    rolling_data = build_dashboard_data(field_leads, rolling_dates, today=today, lane_reps=None, lane_label="All Reps")
-
     # ── Day Detail Panel data ──
     log("\n═══ Day Detail Panel ═══")
 
@@ -3504,14 +3500,18 @@ def main():
     # ── EOD Email (8pm PT, M-F only — or forced via FORCE_EOD_EMAIL=true for testing) ──
     # run_minute < 15 ensures only the first run of the hour fires, not all 4.
     # run_weekday < 5 ensures M-F only (0=Mon ... 4=Fri, 5=Sat, 6=Sun).
+    # Uses team_data (lane-filtered to ALL_LANE_REPS + rep data attached above)
+    # — previously used a separate rolling_data build with no lane filter, which
+    # leaked non-lane user_ids into the by-rep "Other" bucket and lost the rep
+    # dict attachments, causing F/Us & Reschedules + Total to render as 0.
     force_email = os.environ.get("FORCE_EOD_EMAIL", "").lower() == "true"
     if (run_hour == 20 and run_weekday < 5 and run_minute < 15) or force_email:
-        send_eod_email(rolling_data, today, EMAIL_TO)
+        send_eod_email(team_data, today, EMAIL_TO)
 
     # ── Friday 4pm PT — send to Joe only ──
     if run_hour == 16 and run_weekday == 4 and run_minute < 15:
         log("\n═══ Friday 4pm Email (Joe) ═══")
-        send_eod_email(rolling_data, today, ["joedysert@modern-amenities.com"])
+        send_eod_email(team_data, today, ["joedysert@modern-amenities.com"])
 
     elapsed = time.time() - start_time
     log(f"\n🏁 Done! API calls: {_api_call_count} | Time: {elapsed:.1f}s")
