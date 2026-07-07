@@ -1135,7 +1135,16 @@ def aggregate_rep_breakdown_for_date(reps_uid_counter, rep_total_meetings, rep_m
         new_count   = reps_uid_counter.get(uid, 0)
         cat         = rep_meetings_by_category.get(uid, {}).get(target_date, {})
         fu_resch    = cat.get("fu", 0) + cat.get("resch", 0)
-        rep_total   = rep_total_meetings.get(uid, {}).get(target_date, 0)
+        # Synthetic total — matches the hero card's Total Meetings Booked math.
+        # We intentionally do NOT read rep_total_meetings[uid][target_date] here
+        # because that's the raw kept-meeting count from Close's /activity/meeting/
+        # endpoint, and it can diverge from `new + fu_resch` when a lead has FSCBD
+        # set but its calendar event was canceled / dedup'd / excluded. Using
+        # synthetic total guarantees the row math always adds up (NEW + F/U+R = TOT)
+        # and stays consistent with the hero card. Bonus: for NEW_CALLS_ONLY_REPS
+        # (clamped) reps, fu_resch is 0 → synthetic total collapses to new_count,
+        # matching the clamp behavior exactly.
+        rep_total   = new_count + fu_resch
         name        = lane_rep_names.get(uid, "Other")
         if name not in rep_agg:
             rep_agg[name] = [0, 0, 0, False]
