@@ -42,5 +42,8 @@ jobs:
           CALENDLY_API_KEY: ${{ secrets.CALENDLY_API_KEY }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
-          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          # Alerts go to TEST_EMAIL_TO (just you) while testing — deliberately NOT
+          # the EOD distro. To send to the team later, add EMAIL_TO here and set
+          # RECIPIENT_SECRET = "EMAIL_TO" in dedupe_bookings.py.
+          TEST_EMAIL_TO: ${{ secrets.TEST_EMAIL_TO }}
         run: python dedupe_bookings.py
