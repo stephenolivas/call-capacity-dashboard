@@ -3204,16 +3204,22 @@ def format_eod_email(data):
     else:
         lost_lines_plain = "* None"
 
-    # Scraper bookings plain — "Vince (3) — 4 set · 2 for today · 100% show"
-    scraper_lines_plain_parts = []
-    for s in data["scraper_lines"]:
-        parts = [f"{s['set']} set", f"{s['booked']} for today"]
-        if s["rate"] is not None:
-            parts.append(f"{s['rate']:.0f}% show")
-        scraper_lines_plain_parts.append(
-            f"* {s['name']} ({s['goal']}) — " + " · ".join(parts)
-        )
-    scraper_lines_plain = "\n".join(scraper_lines_plain_parts) if scraper_lines_plain_parts else "* None"
+    # Scraper bookings plain — aligned as a fixed-width table for terminal-mail readability.
+    if data["scraper_lines"]:
+        # Widest "Name (goal)" defines the name column so numbers align.
+        name_cells = [f"{s['name']} ({s['goal']})" for s in data["scraper_lines"]]
+        name_w     = max(len(c) for c in name_cells)
+        scraper_lines_plain_parts = [
+            f"  {'Name':<{name_w}}   {'Set':>3}   {'For Today':>9}   {'Show':>5}"
+        ]
+        for s, name_cell in zip(data["scraper_lines"], name_cells):
+            rate_str = f"{s['rate']:.0f}%" if s["rate"] is not None else "—"
+            scraper_lines_plain_parts.append(
+                f"  {name_cell:<{name_w}}   {s['set']:>3}   {s['booked']:>9}   {rate_str:>5}"
+            )
+        scraper_lines_plain = "\n".join(scraper_lines_plain_parts)
+    else:
+        scraper_lines_plain = "* None"
 
     # VendHub calls plain
     vendhub_lines_plain = (
@@ -3312,30 +3318,39 @@ def format_eod_email(data):
     else:
         lost_rows = '<tr><td style="padding:6px 0;color:#999;font-size:14px;">None</td></tr>'
 
-    # Scraper rows — "Vince (3) — 4 set · 2 for today · 100% show".
-    # "set" (activity) is the primary number, styled bold; "for today" (outcome)
-    # + show rate follow as secondary context. Show rate omitted when booked=0.
-    scraper_row_parts = []
-    for i, s in enumerate(data["scraper_lines"]):
-        is_last = i == len(data["scraper_lines"]) - 1
-        border  = "" if is_last else "border-bottom:1px solid #f0f0f0;"
-        set_color    = "#333" if s["set"]    > 0 else "#bbb"
-        booked_color = "#333" if s["booked"] > 0 else "#bbb"
-        rate_html = (
-            f' <span style="color:#888;">· {s["rate"]:.0f}% show</span>'
-            if s["rate"] is not None else ""
-        )
+    # Scraper rows — proper table layout so counts align vertically.
+    # Column widths chosen so the header labels ("Set", "For Today", "Show") fit
+    # cleanly right-aligned above the numbers, matching the by-rep table style.
+    # Show rate omitted (rendered as "—") when there are no calls for today.
+    _sh_header_td = (
+        'padding:6px 8px 4px;color:#888;font-size:11px;font-weight:700;'
+        'letter-spacing:0.02em;border-bottom:1px solid #e5e5e5;text-align:right;'
+    )
+    scraper_header = (
+        '<tr>'
+        f'<td style="{_sh_header_td}text-align:left;padding-left:0;"></td>'
+        f'<td style="{_sh_header_td}width:55px;">Set</td>'
+        f'<td style="{_sh_header_td}width:90px;">For Today</td>'
+        f'<td style="{_sh_header_td}width:60px;padding-right:0;">Show</td>'
+        '</tr>'
+    )
+    scraper_row_parts = [scraper_header]
+    for s in data["scraper_lines"]:
+        set_val    = s["set"]
+        booked_val = s["booked"]
+        set_color    = "#333" if set_val    > 0 else "#bbb"
+        booked_color = "#333" if booked_val > 0 else "#bbb"
+        show_display = f'{s["rate"]:.0f}%' if s["rate"] is not None else "—"
+        show_color   = "#333" if s["rate"] is not None else "#bbb"
         scraper_row_parts.append(
-            f'<tr><td style="padding:7px 0;color:#333;font-size:14px;{border}">'
-            f'{_esc(s["name"])} <span style="color:#888;">({s["goal"]})</span> '
-            f'<span style="color:#999;">— </span>'
-            f'<span style="color:{set_color};font-weight:700;">{s["set"]}</span>'
-            f' <span style="color:#888;">set</span>'
-            f' <span style="color:#999;">· </span>'
-            f'<span style="color:{booked_color};font-weight:700;">{s["booked"]}</span>'
-            f' <span style="color:#888;">for today</span>'
-            f'{rate_html}'
-            f'</td></tr>'
+            '<tr>'
+            f'<td style="padding:6px 0;border-bottom:1px solid #f5f5f5;color:#333;font-size:13px;">'
+            f'{_esc(s["name"])} <span style="color:#888;">({s["goal"]})</span>'
+            f'</td>'
+            f'<td style="padding:6px 8px;border-bottom:1px solid #f5f5f5;color:{set_color};font-size:13px;font-weight:700;text-align:right;">{set_val}</td>'
+            f'<td style="padding:6px 8px;border-bottom:1px solid #f5f5f5;color:{booked_color};font-size:13px;font-weight:700;text-align:right;">{booked_val}</td>'
+            f'<td style="padding:6px 0;border-bottom:1px solid #f5f5f5;color:{show_color};font-size:13px;text-align:right;">{show_display}</td>'
+            '</tr>'
         )
     scraper_rows = "".join(scraper_row_parts)
 
@@ -3406,7 +3421,7 @@ def format_eod_email(data):
 
         <!-- Scraper Bookings block -->
         <tr><td style="background:#ffffff;padding:20px 28px;">
-          <p style="margin:0 0 12px;font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#1b5e1b;border-left:3px solid #1b5e1b;padding-left:8px;">SCRAPER BOOKINGS <span style="color:#888;font-weight:500;letter-spacing:0.02em;text-transform:none;">— name (goal) — set today · on calendar today · show rate</span></p>
+          <p style="margin:0 0 12px;font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#1b5e1b;border-left:3px solid #1b5e1b;padding-left:8px;">SCRAPER BOOKINGS <span style="color:#888;font-weight:500;letter-spacing:0.02em;text-transform:none;">— name (goal)</span></p>
           <table width="100%" cellpadding="0" cellspacing="0">
             {scraper_rows}
           </table>
