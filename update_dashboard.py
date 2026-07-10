@@ -2990,11 +2990,19 @@ def build_eod_data(rolling_data, today):
     # We iterate today_lead_ids (already fetched into email_leads) so this adds
     # zero API calls.
     # Match on the exact Close dropdown value (full name); display the short name.
+    # Filter to Reactivation Scrapers funnel only — the setter field is only
+    # meaningful there; if it's populated on other funnels (data hygiene issue),
+    # we don't want to inflate scraper counts. Matches the live dashboard's
+    # setter drilldown convention.
+    SCRAPER_FUNNEL = "Reactivation Scrapers"
     scraper_stats = {close_name: {"booked": 0, "shown": 0}
                      for close_name, _, _ in SCRAPER_SETTERS}
     for lid in today_lead_ids:
         lead = email_leads.get(lid)
         if not lead:
+            continue
+        funnel = (lead.get(f"custom.{CF_FUNNEL_DEAL}") or "").strip()
+        if funnel != SCRAPER_FUNNEL:
             continue
         setter = (lead.get(f"custom.{CF_REACT_SETTER}") or "").strip()
         if setter not in scraper_stats:
