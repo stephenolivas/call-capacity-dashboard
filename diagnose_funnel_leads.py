@@ -73,6 +73,7 @@ LANE_1_REPS = {
     "user_XEbPgLixZy4dhuLp34WogOzCIChkKEnrffDnHlxOnA7",  # Danny Santolaya
     "user_1TKtkacQ7ZMKkcqnmCERikTYWwGltp5XUjEE9Hshple",  # Shreya Bechra
     "user_vyiPzY0qxbLwnW5Ubwae8vY2MLviPuozSTIsEKcyrFE",  # Zac Clover
+    "user_3nrtuEmgPYd5VA15NvrxgQxDVNWbhrNSzitEKGwi8s6",  # Ryan Jones (VendHub closer)
 }
 LANE_2_REPS = {
     "user_ulI4pdlkBQGJpFBjSfdf3U2deAXQATVPSAurnbL80T9",  # Bryan Barcus (historical)
@@ -102,6 +103,7 @@ REP_NAME_FULL = {
     "user_XEbPgLixZy4dhuLp34WogOzCIChkKEnrffDnHlxOnA7": "Danny Santolaya",
     "user_1TKtkacQ7ZMKkcqnmCERikTYWwGltp5XUjEE9Hshple": "Shreya Bechra",
     "user_vyiPzY0qxbLwnW5Ubwae8vY2MLviPuozSTIsEKcyrFE": "Zac Clover",
+    "user_3nrtuEmgPYd5VA15NvrxgQxDVNWbhrNSzitEKGwi8s6": "Ryan Jones",
     "user_pKEujUcHJfsEyI5lM6L56aXM2s5nNOU994JRjRSlAdA": "Chris Wanke / LTF Quiz Calendar",
     "user_Bov31jjnHhENBy8uWNTTL8KKax8VX7o6DugLzBYOHBG": "Lyle Hubbard",
     "user_WquWudQN7dghZsAPiNY80eJUmg1EadQg2UCQdvgbif7": "Kelly Schrader",
