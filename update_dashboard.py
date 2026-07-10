@@ -2822,6 +2822,51 @@ def fetch_todays_lost_leads(today):
     return results
 
 
+def fetch_meetings_created_today(today):
+    """Fetch all meeting activities whose date_created falls on today (PT day).
+    Used by the EOD email's Scraper Bookings section to compute the "set today"
+    metric — meetings a scraper created today, regardless of when the meeting
+    itself is scheduled to occur.
+
+    Returns a list of {lead_id, user_id, starts_at, date_created} dicts (already
+    filtered to entries with a lead_id). Empty list on any API error (logged;
+    doesn't block the rest of the email).
+    """
+    day_start_pt = datetime(today.year, today.month, today.day, tzinfo=PACIFIC)
+    day_end_pt   = day_start_pt + timedelta(days=1)
+    start_utc    = day_start_pt.astimezone(timezone.utc).isoformat()
+    end_utc      = day_end_pt.astimezone(timezone.utc).isoformat()
+
+    results = []
+    skip    = 0
+    try:
+        while True:
+            data = close_get("activity/meeting", {
+                "date_created__gte": start_utc,
+                "date_created__lt":  end_utc,
+                "_limit":            100,
+                "_skip":             skip,
+            })
+            batch = data.get("data", [])
+            for m in batch:
+                lid = m.get("lead_id")
+                if not lid:
+                    continue
+                results.append({
+                    "lead_id":      lid,
+                    "user_id":      m.get("user_id"),
+                    "starts_at":    m.get("starts_at"),
+                    "date_created": m.get("date_created"),
+                })
+            if not data.get("has_more"):
+                break
+            skip += len(batch) or 100
+    except Exception as e:
+        log(f"  ⚠ EOD email: Could not fetch today's meeting activities: {e}")
+        return []
+    return results
+
+
 def fetch_leads_for_email(lead_ids):
     """
     Fetch leads with all fields the EOD email needs.
@@ -2988,7 +3033,7 @@ def build_eod_data(rolling_data, today):
     # compute the show rate on those specific leads. Show rate = # Yes / # booked
     # (no reschedule-status exclusion, per user request — kept simple).
     # We iterate today_lead_ids (already fetched into email_leads) so this adds
-    # zero API calls.
+    # zero API calls for the "booked for today" side.
     # Match on the exact Close dropdown value (full name); display the short name.
     # Filter to Reactivation Scrapers funnel only — the setter field is only
     # meaningful there; if it's populated on other funnels (data hygiene issue),
@@ -3011,6 +3056,53 @@ def build_eod_data(rolling_data, today):
         if str(lead.get(f"custom.{CF_SHOW_UP}", "")).lower() == "yes":
             scraper_stats[setter]["shown"] += 1
 
+    # ── Scraper "set today" — activity metric ────────────────────────────────
+    # Counts meetings each scraper CREATED today (regardless of when the meeting
+    # itself is scheduled). Answers "how many did they book today?" — different
+    # from "booked for today" which is FSCBD == today. Uses the /activity/meeting/
+    # endpoint filtered by date_created. Leads not already in email_leads (their
+    # FSCBD isn't today) get a targeted fetch here — expected small volume
+    # (10–20 leads on a normal scraper day).
+    meetings_set_today = fetch_meetings_created_today(today)
+    scraper_set_today  = {close_name: 0 for close_name, _, _ in SCRAPER_SETTERS}
+
+    # Dedupe by lead_id — a lead with multiple meetings created today (e.g.,
+    # rescheduled by the scraper) still counts as one "set" action.
+    seen_lids_for_set = set()
+    lids_to_check = []
+    for m in meetings_set_today:
+        lid = m["lead_id"]
+        if lid in seen_lids_for_set:
+            continue
+        seen_lids_for_set.add(lid)
+        lids_to_check.append(lid)
+
+    # Fetch any lead not already in email_leads (need funnel + setter fields).
+    fetch_fields = ",".join([
+        "id", f"custom.{CF_FUNNEL_DEAL}", f"custom.{CF_REACT_SETTER}",
+    ])
+    for lid in lids_to_check:
+        if lid in email_leads and email_leads[lid] is not None:
+            continue  # already have this lead
+        try:
+            email_leads[lid] = close_get(f"lead/{lid}", {"_fields": fetch_fields})
+        except Exception as e:
+            log(f"  ⚠ EOD email: Could not fetch scraper-set lead {lid}: {e}")
+            email_leads[lid] = None
+
+    # Aggregate — same funnel + setter filter as "booked for today".
+    for lid in lids_to_check:
+        lead = email_leads.get(lid)
+        if not lead:
+            continue
+        funnel = (lead.get(f"custom.{CF_FUNNEL_DEAL}") or "").strip()
+        if funnel != SCRAPER_FUNNEL:
+            continue
+        setter = (lead.get(f"custom.{CF_REACT_SETTER}") or "").strip()
+        if setter not in scraper_set_today:
+            continue
+        scraper_set_today[setter] += 1
+
     scraper_lines = []  # ordered per SCRAPER_SETTERS, always includes all setters
     for close_name, display_name, goal in SCRAPER_SETTERS:
         booked = scraper_stats[close_name]["booked"]
@@ -3019,6 +3111,7 @@ def build_eod_data(rolling_data, today):
         scraper_lines.append({
             "name":   display_name,
             "goal":   goal,
+            "set":    scraper_set_today[close_name],  # NEW: activity metric
             "booked": booked,
             "shown":  shown,
             "rate":   rate,  # float or None
@@ -3111,15 +3204,15 @@ def format_eod_email(data):
     else:
         lost_lines_plain = "* None"
 
-    # Scraper bookings plain — "Vince (3) — 5 · 20% show"
+    # Scraper bookings plain — "Vince (3) — 4 set · 2 for today · 100% show"
     scraper_lines_plain_parts = []
     for s in data["scraper_lines"]:
+        parts = [f"{s['set']} set", f"{s['booked']} for today"]
         if s["rate"] is not None:
-            scraper_lines_plain_parts.append(
-                f"* {s['name']} ({s['goal']}) — {s['booked']} · {s['rate']:.0f}% show"
-            )
-        else:
-            scraper_lines_plain_parts.append(f"* {s['name']} ({s['goal']}) — {s['booked']}")
+            parts.append(f"{s['rate']:.0f}% show")
+        scraper_lines_plain_parts.append(
+            f"* {s['name']} ({s['goal']}) — " + " · ".join(parts)
+        )
     scraper_lines_plain = "\n".join(scraper_lines_plain_parts) if scraper_lines_plain_parts else "* None"
 
     # VendHub calls plain
@@ -3219,22 +3312,28 @@ def format_eod_email(data):
     else:
         lost_rows = '<tr><td style="padding:6px 0;color:#999;font-size:14px;">None</td></tr>'
 
-    # Scraper rows — "Vince (3) — 5 · 20% show" pattern, one row per setter.
-    # Always renders all four (missing days show 0). Show rate omitted when booked=0.
+    # Scraper rows — "Vince (3) — 4 set · 2 for today · 100% show".
+    # "set" (activity) is the primary number, styled bold; "for today" (outcome)
+    # + show rate follow as secondary context. Show rate omitted when booked=0.
     scraper_row_parts = []
     for i, s in enumerate(data["scraper_lines"]):
         is_last = i == len(data["scraper_lines"]) - 1
         border  = "" if is_last else "border-bottom:1px solid #f0f0f0;"
+        set_color    = "#333" if s["set"]    > 0 else "#bbb"
+        booked_color = "#333" if s["booked"] > 0 else "#bbb"
         rate_html = (
             f' <span style="color:#888;">· {s["rate"]:.0f}% show</span>'
             if s["rate"] is not None else ""
         )
-        booked_color = "#333" if s["booked"] > 0 else "#bbb"
         scraper_row_parts.append(
             f'<tr><td style="padding:7px 0;color:#333;font-size:14px;{border}">'
             f'{_esc(s["name"])} <span style="color:#888;">({s["goal"]})</span> '
             f'<span style="color:#999;">— </span>'
+            f'<span style="color:{set_color};font-weight:700;">{s["set"]}</span>'
+            f' <span style="color:#888;">set</span>'
+            f' <span style="color:#999;">· </span>'
             f'<span style="color:{booked_color};font-weight:700;">{s["booked"]}</span>'
+            f' <span style="color:#888;">for today</span>'
             f'{rate_html}'
             f'</td></tr>'
         )
@@ -3307,7 +3406,7 @@ def format_eod_email(data):
 
         <!-- Scraper Bookings block -->
         <tr><td style="background:#ffffff;padding:20px 28px;">
-          <p style="margin:0 0 12px;font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#1b5e1b;border-left:3px solid #1b5e1b;padding-left:8px;">SCRAPER BOOKINGS <span style="color:#888;font-weight:500;letter-spacing:0.02em;text-transform:none;">— name (goal) — booked · show rate</span></p>
+          <p style="margin:0 0 12px;font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#1b5e1b;border-left:3px solid #1b5e1b;padding-left:8px;">SCRAPER BOOKINGS <span style="color:#888;font-weight:500;letter-spacing:0.02em;text-transform:none;">— name (goal) — set today · on calendar today · show rate</span></p>
           <table width="100%" cellpadding="0" cellspacing="0">
             {scraper_rows}
           </table>
