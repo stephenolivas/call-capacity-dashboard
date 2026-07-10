@@ -1,0 +1,46 @@
+name: Dedupe Bookings
+
+# Reconciliation sweep for duplicate Calendly bookings / duplicate leads.
+# Notify-only (v1): emails an alert when an invitee holds 2+ upcoming meetings.
+# Reuses the dashboard repo's existing secrets — no new infra.
+
+on:
+  schedule:
+    # Every 5 minutes. GitHub's minimum granularity; runs may be delayed a few
+    # minutes under load, which is fine for a reconciliation guard.
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+# Read-only job: no commits, so no elevated permissions needed.
+permissions:
+  contents: read
+
+concurrency:
+  # Don't let a slow run overlap the next scheduled one.
+  group: dedupe-bookings
+  cancel-in-progress: false
+
+jobs:
+  dedupe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run duplicate-booking sweep
+        env:
+          CLOSE_API_KEY: ${{ secrets.CLOSE_API_KEY }}
+          CALENDLY_API_KEY: ${{ secrets.CALENDLY_API_KEY }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: python dedupe_bookings.py
