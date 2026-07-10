@@ -3120,8 +3120,9 @@ def build_eod_data(rolling_data, today):
     # ── VendHub Calls by Rep ──────────────────────────────────────────────────
     # Any of today's leads whose VendHub Call field is populated (dropdown has
     # 2 options, both count). Grouped by lead owner; user_id resolved via
-    # user_map (which we already fetched for the Closers list).
-    vendhub_by_owner = {}  # display_name -> count
+    # user_map (which we already fetched for the Closers list). Show rate is
+    # per-owner: # Yes / # booked on their VendHub-flagged leads today.
+    vendhub_by_owner = {}  # display_name -> {"booked": count, "shown": count}
     for lid in today_lead_ids:
         lead = email_leads.get(lid)
         if not lead:
@@ -3131,13 +3132,27 @@ def build_eod_data(rolling_data, today):
             continue
         owner_uid  = lead.get(f"custom.{CF_LEAD_OWNER_NAME}") or ""
         owner_name = user_map.get(owner_uid) or f"User {owner_uid[:10]}…" if owner_uid else "(no owner)"
-        vendhub_by_owner[owner_name] = vendhub_by_owner.get(owner_name, 0) + 1
+        if owner_name not in vendhub_by_owner:
+            vendhub_by_owner[owner_name] = {"booked": 0, "shown": 0}
+        vendhub_by_owner[owner_name]["booked"] += 1
+        if str(lead.get(f"custom.{CF_SHOW_UP}", "")).lower() == "yes":
+            vendhub_by_owner[owner_name]["shown"] += 1
 
-    # Sort by count desc, then name asc, for stable display
-    vendhub_lines = sorted(
+    # Sort by booked desc, then name asc, for stable display.
+    vendhub_lines = []
+    for owner_name, stats in sorted(
         vendhub_by_owner.items(),
-        key=lambda kv: (-kv[1], kv[0].lower())
-    )
+        key=lambda kv: (-kv[1]["booked"], kv[0].lower())
+    ):
+        booked = stats["booked"]
+        shown  = stats["shown"]
+        rate   = (shown / booked * 100) if booked > 0 else None
+        vendhub_lines.append({
+            "name":   owner_name,
+            "booked": booked,
+            "shown":  shown,
+            "rate":   rate,  # float or None
+        })
 
     return {
         "today":               today,
@@ -3221,11 +3236,17 @@ def format_eod_email(data):
     else:
         scraper_lines_plain = "* None"
 
-    # VendHub calls plain
-    vendhub_lines_plain = (
-        "\n".join(f"* {name} — {count}" for name, count in data["vendhub_lines"])
-        if data["vendhub_lines"] else "* None"
-    )
+    # VendHub calls plain — "Ryan Jones — 1 · 100% show"
+    if data["vendhub_lines"]:
+        vh_plain_parts = []
+        for v in data["vendhub_lines"]:
+            if v["rate"] is not None:
+                vh_plain_parts.append(f"* {v['name']} — {v['booked']} · {v['rate']:.0f}% show")
+            else:
+                vh_plain_parts.append(f"* {v['name']} — {v['booked']}")
+        vendhub_lines_plain = "\n".join(vh_plain_parts)
+    else:
+        vendhub_lines_plain = "* None"
 
     subject = f"EOD Stats {date_str}"
 
@@ -3354,16 +3375,22 @@ def format_eod_email(data):
         )
     scraper_rows = "".join(scraper_row_parts)
 
-    # VendHub rows — "Name — count". Empty state shows "None".
+    # VendHub rows — "Name — count · X% show". Empty state shows "None".
+    # Show rate appended in the same dimmed style used elsewhere in the email.
     if data["vendhub_lines"]:
         vh_parts = []
-        for i, (name, count) in enumerate(data["vendhub_lines"]):
+        for i, v in enumerate(data["vendhub_lines"]):
             is_last = i == len(data["vendhub_lines"]) - 1
             border  = "" if is_last else "border-bottom:1px solid #f0f0f0;"
+            rate_html = (
+                f' <span style="color:#888;">· {v["rate"]:.0f}% show</span>'
+                if v["rate"] is not None else ""
+            )
             vh_parts.append(
                 f'<tr><td style="padding:7px 0;color:#333;font-size:14px;{border}">'
-                f'{_esc(name)} <span style="color:#999;">— </span>'
-                f'<span style="color:#333;font-weight:700;">{count}</span>'
+                f'{_esc(v["name"])} <span style="color:#999;">— </span>'
+                f'<span style="color:#333;font-weight:700;">{v["booked"]}</span>'
+                f'{rate_html}'
                 f'</td></tr>'
             )
         vendhub_rows = "".join(vh_parts)
