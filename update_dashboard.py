@@ -2686,10 +2686,23 @@ CF_SHOW_UP         = "cf_OPyvpU45RdvjLqfm8V1VWwNxrGKogEH2IBJmfCj0Uhq"
 CF_FUNNEL_DEAL     = "cf_xqDQE8fkPsWa0RNEve7hcaxKblCe6489XeZGRDzyPdX"
 CF_ICP             = "cf_OcYP2vXsG2tvbMDubwQNcidiqVegXa7CsyWkOR3f7KN"
 CF_LOST_REASON     = "cf_R4i05fLNOQP8yveAs4ofTMMYGAQnkLLklunP4lov2Bt"  # lead-level field; label is misleading
+CF_VENDHUB         = "cf_2oYFNCsi4dcrjcIS6xFvGf37RGtraixl8jHYinwta9m"  # dropdown; presence = counted VendHub call
+CF_REACT_SETTER    = "cf_vz6kNiu4ItFxRA8Y9HKlWIoQMq3TsdaQqKekQ2YuxVk"  # Reactivation Setter Name; used for scraper attribution
 
 # Label of the Close lead status that means "deal lost". If the label ever
 # changes in Close, update it here — we filter by string match on new_status_label.
 LOST_STATUS_LABEL  = "💔 Lost"
+
+# Scraper setters — used in the EOD email "Scraper Bookings" section. These match
+# the exact Reactivation Setter Name dropdown values in Close (see FIELD_REACTIVATION_SETTER).
+# List order = display order in the email. Goal is per-day booking target and can
+# vary per setter over time; update the tuples as they change.
+SCRAPER_SETTERS = [
+    ("Vince",    3),
+    ("Jacob",    3),
+    ("Jennifer", 3),
+    ("Juan",     3),
+]
 
 # ── Short funnel labels for the email body ────────────────────────────────────
 
@@ -2816,6 +2829,8 @@ def fetch_leads_for_email(lead_ids):
         f"custom.{CF_SHOW_UP}",
         f"custom.{CF_FUNNEL_DEAL}",
         f"custom.{CF_ICP}",
+        f"custom.{CF_REACT_SETTER}",  # for Scraper Bookings section
+        f"custom.{CF_VENDHUB}",       # for VendHub Calls section
     ])
     cache = {}
     for lid in lead_ids:
@@ -2963,6 +2978,59 @@ def build_eod_data(rolling_data, today):
         today,
     )
 
+    # ── Scraper Bookings + Show Rate ──────────────────────────────────────────
+    # For each configured scraper setter, count today's leads they booked and
+    # compute the show rate on those specific leads. Show rate = # Yes / # booked
+    # (no reschedule-status exclusion, per user request — kept simple).
+    # We iterate today_lead_ids (already fetched into email_leads) so this adds
+    # zero API calls.
+    scraper_stats = {name: {"booked": 0, "shown": 0} for name, _ in SCRAPER_SETTERS}
+    for lid in today_lead_ids:
+        lead = email_leads.get(lid)
+        if not lead:
+            continue
+        setter = (lead.get(f"custom.{CF_REACT_SETTER}") or "").strip()
+        if setter not in scraper_stats:
+            continue
+        scraper_stats[setter]["booked"] += 1
+        if str(lead.get(f"custom.{CF_SHOW_UP}", "")).lower() == "yes":
+            scraper_stats[setter]["shown"] += 1
+
+    scraper_lines = []  # ordered per SCRAPER_SETTERS, always includes all four
+    for name, goal in SCRAPER_SETTERS:
+        booked = scraper_stats[name]["booked"]
+        shown  = scraper_stats[name]["shown"]
+        rate   = (shown / booked * 100) if booked > 0 else None  # None → hide "· X% show"
+        scraper_lines.append({
+            "name":   name,
+            "goal":   goal,
+            "booked": booked,
+            "shown":  shown,
+            "rate":   rate,  # float or None
+        })
+
+    # ── VendHub Calls by Rep ──────────────────────────────────────────────────
+    # Any of today's leads whose VendHub Call field is populated (dropdown has
+    # 2 options, both count). Grouped by lead owner; user_id resolved via
+    # user_map (which we already fetched for the Closers list).
+    vendhub_by_owner = {}  # display_name -> count
+    for lid in today_lead_ids:
+        lead = email_leads.get(lid)
+        if not lead:
+            continue
+        vh_val = (lead.get(f"custom.{CF_VENDHUB}") or "").strip()
+        if not vh_val:
+            continue
+        owner_uid  = lead.get(f"custom.{CF_LEAD_OWNER_NAME}") or ""
+        owner_name = user_map.get(owner_uid) or f"User {owner_uid[:10]}…" if owner_uid else "(no owner)"
+        vendhub_by_owner[owner_name] = vendhub_by_owner.get(owner_name, 0) + 1
+
+    # Sort by count desc, then name asc, for stable display
+    vendhub_lines = sorted(
+        vendhub_by_owner.items(),
+        key=lambda kv: (-kv[1], kv[0].lower())
+    )
+
     return {
         "today":               today,
         "today_count":         today_count,
@@ -2974,6 +3042,8 @@ def build_eod_data(rolling_data, today):
         "icp_lines":           icp_lines,
         "lost_groups":         lost_groups,
         "rep_breakdown_today": rep_breakdown_today,  # [[name, new, fu_r, tot, is_clamped], ...]
+        "scraper_lines":       scraper_lines,        # [{name, goal, booked, shown, rate}]
+        "vendhub_lines":       vendhub_lines,        # [(owner_name, count), ...]
     }
 
 
@@ -3026,6 +3096,23 @@ def format_eod_email(data):
     else:
         lost_lines_plain = "* None"
 
+    # Scraper bookings plain — "Vince (3) — 5 · 20% show"
+    scraper_lines_plain_parts = []
+    for s in data["scraper_lines"]:
+        if s["rate"] is not None:
+            scraper_lines_plain_parts.append(
+                f"* {s['name']} ({s['goal']}) — {s['booked']} · {s['rate']:.0f}% show"
+            )
+        else:
+            scraper_lines_plain_parts.append(f"* {s['name']} ({s['goal']}) — {s['booked']}")
+    scraper_lines_plain = "\n".join(scraper_lines_plain_parts) if scraper_lines_plain_parts else "* None"
+
+    # VendHub calls plain
+    vendhub_lines_plain = (
+        "\n".join(f"* {name} — {count}" for name, count in data["vendhub_lines"])
+        if data["vendhub_lines"] else "* None"
+    )
+
     subject = f"EOD Stats {date_str}"
 
     # ── Plain text ────────────────────────────────────────────────────────────
@@ -3038,6 +3125,8 @@ def format_eod_email(data):
         f"Show Rate:                 {data['show_rate']:.0f}%\n"
         f"Meetings Set for Tomorrow: {data['tomorrow_count']}\n\n"
         f"Today's calls by rep:\n{rep_breakdown_plain}\n\n"
+        f"Scraper bookings:\n{scraper_lines_plain}\n\n"
+        f"VendHub calls:\n{vendhub_lines_plain}\n\n"
         f"Closed won funnel / ICP:\n{icp_lines_plain}\n\n"
         f"Closed lost — reason / funnel:\n{lost_lines_plain}\n"
     )
@@ -3115,6 +3204,43 @@ def format_eod_email(data):
     else:
         lost_rows = '<tr><td style="padding:6px 0;color:#999;font-size:14px;">None</td></tr>'
 
+    # Scraper rows — "Vince (3) — 5 · 20% show" pattern, one row per setter.
+    # Always renders all four (missing days show 0). Show rate omitted when booked=0.
+    scraper_row_parts = []
+    for i, s in enumerate(data["scraper_lines"]):
+        is_last = i == len(data["scraper_lines"]) - 1
+        border  = "" if is_last else "border-bottom:1px solid #f0f0f0;"
+        rate_html = (
+            f' <span style="color:#888;">· {s["rate"]:.0f}% show</span>'
+            if s["rate"] is not None else ""
+        )
+        booked_color = "#333" if s["booked"] > 0 else "#bbb"
+        scraper_row_parts.append(
+            f'<tr><td style="padding:7px 0;color:#333;font-size:14px;{border}">'
+            f'{_esc(s["name"])} <span style="color:#888;">({s["goal"]})</span> '
+            f'<span style="color:#999;">— </span>'
+            f'<span style="color:{booked_color};font-weight:700;">{s["booked"]}</span>'
+            f'{rate_html}'
+            f'</td></tr>'
+        )
+    scraper_rows = "".join(scraper_row_parts)
+
+    # VendHub rows — "Name — count". Empty state shows "None".
+    if data["vendhub_lines"]:
+        vh_parts = []
+        for i, (name, count) in enumerate(data["vendhub_lines"]):
+            is_last = i == len(data["vendhub_lines"]) - 1
+            border  = "" if is_last else "border-bottom:1px solid #f0f0f0;"
+            vh_parts.append(
+                f'<tr><td style="padding:7px 0;color:#333;font-size:14px;{border}">'
+                f'{_esc(name)} <span style="color:#999;">— </span>'
+                f'<span style="color:#333;font-weight:700;">{count}</span>'
+                f'</td></tr>'
+            )
+        vendhub_rows = "".join(vh_parts)
+    else:
+        vendhub_rows = '<tr><td style="padding:6px 0;color:#999;font-size:14px;">None</td></tr>'
+
     def stat_row(label, value, value_color="#1a1a1a"):
         return f"""
         <tr>
@@ -3158,6 +3284,28 @@ def format_eod_email(data):
           <p style="margin:0 0 12px;font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#1b5e1b;border-left:3px solid #1b5e1b;padding-left:8px;">TODAY'S CALLS — BY REP</p>
           <table width="100%" cellpadding="0" cellspacing="0">
             {rep_rows}
+          </table>
+        </td></tr>
+
+        <!-- Divider -->
+        <tr><td style="background:#ffffff;padding:0 28px;"><hr style="border:none;border-top:1px solid #ececec;margin:0;"></td></tr>
+
+        <!-- Scraper Bookings block -->
+        <tr><td style="background:#ffffff;padding:20px 28px;">
+          <p style="margin:0 0 12px;font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#1b5e1b;border-left:3px solid #1b5e1b;padding-left:8px;">SCRAPER BOOKINGS <span style="color:#888;font-weight:500;letter-spacing:0.02em;text-transform:none;">— name (goal) — booked · show rate</span></p>
+          <table width="100%" cellpadding="0" cellspacing="0">
+            {scraper_rows}
+          </table>
+        </td></tr>
+
+        <!-- Divider -->
+        <tr><td style="background:#ffffff;padding:0 28px;"><hr style="border:none;border-top:1px solid #ececec;margin:0;"></td></tr>
+
+        <!-- VendHub Calls block -->
+        <tr><td style="background:#ffffff;padding:20px 28px;">
+          <p style="margin:0 0 12px;font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#1b5e1b;border-left:3px solid #1b5e1b;padding-left:8px;">VENDHUB CALLS</p>
+          <table width="100%" cellpadding="0" cellspacing="0">
+            {vendhub_rows}
           </table>
         </td></tr>
 
