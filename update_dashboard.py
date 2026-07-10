@@ -248,6 +248,7 @@ LANE_1_REPS = {
     "user_XEbPgLixZy4dhuLp34WogOzCIChkKEnrffDnHlxOnA7",  # Danny Santolaya
     "user_1TKtkacQ7ZMKkcqnmCERikTYWwGltp5XUjEE9Hshple",  # Shreya Bechra
     "user_vyiPzY0qxbLwnW5Ubwae8vY2MLviPuozSTIsEKcyrFE",  # Zac Clover
+    "user_3nrtuEmgPYd5VA15NvrxgQxDVNWbhrNSzitEKGwi8s6",  # Ryan Jones (VendHub closer, added 2026-07-10)
 }
 LANE_1_REP_NAMES = {
     "user_7F059xEinVentOEvkRMP77fWZyvwUiTRTUOuhD11J0e": "Robin Perkins",
@@ -262,6 +263,7 @@ LANE_1_REP_NAMES = {
     "user_XEbPgLixZy4dhuLp34WogOzCIChkKEnrffDnHlxOnA7": "Danny Santolaya",
     "user_1TKtkacQ7ZMKkcqnmCERikTYWwGltp5XUjEE9Hshple": "Shreya Bechra",
     "user_vyiPzY0qxbLwnW5Ubwae8vY2MLviPuozSTIsEKcyrFE": "Zac Clover",
+    "user_3nrtuEmgPYd5VA15NvrxgQxDVNWbhrNSzitEKGwi8s6": "Ryan Jones",
     # Chris Wanke removed from rep details (no longer with company) — user_id retained in LANE_1_REPS so historical calls still count
 }
 LANE_1_LEAD = "user_wHm1vcLde4RExd3vv9UOjnms5Oz8ssXg8600mQuxMPb"  # Christian Hartwell
@@ -2693,15 +2695,18 @@ CF_REACT_SETTER    = "cf_vz6kNiu4ItFxRA8Y9HKlWIoQMq3TsdaQqKekQ2YuxVk"  # Reactiv
 # changes in Close, update it here — we filter by string match on new_status_label.
 LOST_STATUS_LABEL  = "💔 Lost"
 
-# Scraper setters — used in the EOD email "Scraper Bookings" section. These match
-# the exact Reactivation Setter Name dropdown values in Close (see FIELD_REACTIVATION_SETTER).
-# List order = display order in the email. Goal is per-day booking target and can
-# vary per setter over time; update the tuples as they change.
+# Scraper setters — used in the EOD email "Scraper Bookings" section.
+# The FIRST tuple element is the exact Close dropdown value on the Reactivation
+# Setter Name field (see FIELD_REACTIVATION_SETTER); the SECOND is the short
+# display name shown in the email; the THIRD is the per-day booking target.
+# List order = display order in the email. Goals can vary per setter over time —
+# update the tuples as they change.
 SCRAPER_SETTERS = [
-    ("Vince",    3),
-    ("Jacob",    3),
-    ("Jennifer", 3),
-    ("Juan",     3),
+    ("Vince Bartolini",   "Vince",    3),
+    ("Jacob Hepner",      "Jacob",    3),
+    ("William Nowak",     "William",  3),
+    ("Jennifer Padilla",  "Jennifer", 3),
+    ("Juan Cajina",       "Juan",     3),
 ]
 
 # ── Short funnel labels for the email body ────────────────────────────────────
@@ -2984,7 +2989,9 @@ def build_eod_data(rolling_data, today):
     # (no reschedule-status exclusion, per user request — kept simple).
     # We iterate today_lead_ids (already fetched into email_leads) so this adds
     # zero API calls.
-    scraper_stats = {name: {"booked": 0, "shown": 0} for name, _ in SCRAPER_SETTERS}
+    # Match on the exact Close dropdown value (full name); display the short name.
+    scraper_stats = {close_name: {"booked": 0, "shown": 0}
+                     for close_name, _, _ in SCRAPER_SETTERS}
     for lid in today_lead_ids:
         lead = email_leads.get(lid)
         if not lead:
@@ -2996,13 +3003,13 @@ def build_eod_data(rolling_data, today):
         if str(lead.get(f"custom.{CF_SHOW_UP}", "")).lower() == "yes":
             scraper_stats[setter]["shown"] += 1
 
-    scraper_lines = []  # ordered per SCRAPER_SETTERS, always includes all four
-    for name, goal in SCRAPER_SETTERS:
-        booked = scraper_stats[name]["booked"]
-        shown  = scraper_stats[name]["shown"]
+    scraper_lines = []  # ordered per SCRAPER_SETTERS, always includes all setters
+    for close_name, display_name, goal in SCRAPER_SETTERS:
+        booked = scraper_stats[close_name]["booked"]
+        shown  = scraper_stats[close_name]["shown"]
         rate   = (shown / booked * 100) if booked > 0 else None  # None → hide "· X% show"
         scraper_lines.append({
-            "name":   name,
+            "name":   display_name,
             "goal":   goal,
             "booked": booked,
             "shown":  shown,
