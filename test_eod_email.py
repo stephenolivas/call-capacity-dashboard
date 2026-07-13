@@ -30,7 +30,14 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import update_dashboard as ud
 
-TEST_EMAIL_TO = os.environ.get("TEST_EMAIL_TO", "").strip()
+import re
+
+# TEST_EMAIL_TO may hold one address or several. Accept common separators
+# (comma, semicolon, newline, whitespace) so multi-recipient testing works
+# without accidentally jamming addresses into a single string with a newline
+# — SMTP rejects those with "folded header contains newline".
+_raw_test_to  = os.environ.get("TEST_EMAIL_TO", "")
+TEST_EMAIL_TO = [addr.strip() for addr in re.split(r"[,;\s]+", _raw_test_to) if addr.strip()]
 if not TEST_EMAIL_TO:
     print("❌ TEST_EMAIL_TO env var is not set. Set it to your email and re-run.")
     sys.exit(1)
@@ -128,7 +135,7 @@ def build_minimal_rolling_data(today):
 def main():
     today = datetime.now(ud.PACIFIC).date()
     print(f"═══ EOD Email Preview — {today} ═══")
-    print(f"Recipient (override): {TEST_EMAIL_TO}")
+    print(f"Recipients ({len(TEST_EMAIL_TO)}): {', '.join(TEST_EMAIL_TO)}")
     print()
 
     rolling_data = build_minimal_rolling_data(today)
@@ -136,10 +143,10 @@ def main():
 
     # send_eod_email already accepts a recipients override — just pass ours.
     # It logs its own status. Any error is caught and logged (won't crash).
-    ud.send_eod_email(rolling_data, today, recipients=[TEST_EMAIL_TO])
+    ud.send_eod_email(rolling_data, today, recipients=TEST_EMAIL_TO)
 
     print()
-    print(f"═══ Preview sent — check inbox at {TEST_EMAIL_TO} ═══")
+    print(f"═══ Preview sent — check inboxes at {', '.join(TEST_EMAIL_TO)} ═══")
 
 
 if __name__ == "__main__":
