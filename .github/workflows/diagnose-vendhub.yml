@@ -1,0 +1,33 @@
+name: Diagnose VendHub
+
+# Manually inspect specific leads to figure out why they aren't showing up
+# in the EOD email's VendHub Calls section. Paste one or more email addresses,
+# run the workflow, view the diagnostic output in the run logs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      emails:
+        description: 'Lead email addresses to diagnose (comma or newline separated)'
+        required: true
+        type: string
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run VendHub diagnostic
+        env:
+          CLOSE_API_KEY:    ${{ secrets.CLOSE_API_KEY }}
+          VENDHUB_EMAILS:   ${{ github.event.inputs.emails }}
+        run: python diagnose_vendhub.py
