@@ -104,9 +104,11 @@ def build_minimal_rolling_data(today):
     print(f"   ✓ Today ({today}) booked: {daily[today]['booked']}")
     print(f"   ✓ Tomorrow ({tomorrow}) booked: {daily[tomorrow]['booked']}")
 
-    # Fetch rep data for today only — the by-rep breakdown section needs it.
-    print(f"📥 Fetching per-rep meetings for the by-rep section (today: {today})…")
-    rep_total_meetings, rep_meetings_by_category, _non_new = ud.fetch_rep_total_meetings(
+    # Fetch rep data for today only — the by-rep breakdown section needs it,
+    # and the VendHub section needs non_new_meetings (follow-up meetings today)
+    # to catch VendHub calls whose FSCBD is months in the past.
+    print(f"📥 Fetching per-rep meetings for the by-rep + VendHub sections (today: {today})…")
+    rep_total_meetings, rep_meetings_by_category, non_new_meetings = ud.fetch_rep_total_meetings(
         today, tomorrow, ud.ALL_LANE_REPS, lead_to_funnel, leads_with_fscbd
     )
     # Apply the NEW_CALLS_ONLY_REPS clamp — mirrors what build_dashboard_data does.
@@ -129,6 +131,7 @@ def build_minimal_rolling_data(today):
         "valid_meetings":           valid_meetings,
         "rep_total_meetings":       rep_total_meetings,
         "rep_meetings_by_category": rep_meetings_by_category,
+        "non_new_meetings":         non_new_meetings,   # for VendHub follow-up detection
     }
 
 
