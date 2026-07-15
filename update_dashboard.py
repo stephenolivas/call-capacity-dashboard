@@ -2871,24 +2871,20 @@ def fetch_vendhub_flagged_leads_active_today(today):
     """Fetch VendHub-flagged leads that have a meeting occurring today.
 
     Approach:
-      1. Query Close for every lead whose VendHub Call custom field is
-         populated (typically a small set — dozens across the org).
+      1. Query Close for VendHub-flagged leads using multiple search strategies
+         (Close's exact search syntax for custom-field-exists is undocumented and
+         the wildcard `:*` may not work reliably — so we try several patterns
+         and union the results).
       2. For each such lead, fetch its meetings via /activity/meeting/?lead_id=X
-         (targeted query, no user_id filter, no cross-org pagination).
+         (proven to work via the diagnostic script).
       3. Filter locally to meetings whose starts_at falls on today PT.
-      4. Return only leads that have at least one meeting today.
+      4. Return only leads with at least one meeting today.
 
-    This is much more targeted than the broad org-wide meetings query — which
-    can miss records due to pagination limits and sorting — because we ask
-    Close directly "give me THIS lead's meetings" and get all of them back.
-
-    Returns a list of lead dicts with the fields we need for VendHub attribution.
+    Returns a list of lead dicts with the fields we need.
     """
     day_start_pt  = datetime(today.year, today.month, today.day, tzinfo=PACIFIC)
     day_end_pt    = day_start_pt + timedelta(days=1)
 
-    # Step 1 — find every VendHub-flagged lead. Close's search syntax:
-    # `custom.[VendHub Call]:*` matches leads where the field is populated.
     lead_fields = ",".join([
         "id",
         "display_name",
@@ -2896,47 +2892,70 @@ def fetch_vendhub_flagged_leads_active_today(today):
         f"custom.{CF_VENDHUB}",
         f"custom.{CF_SHOW_UP}",
     ])
-    vh_leads = []
-    skip = 0
-    try:
-        while True:
-            data = close_get("lead", {
-                "query":   "custom.[VendHub Call]:*",
-                "_fields": lead_fields,
-                "_limit":  100,
-                "_skip":   skip,
-            })
-            batch = data.get("data", [])
-            vh_leads.extend(batch)
-            if not data.get("has_more"):
-                break
-            skip += len(batch) or 100
-            if skip > 2000:  # sanity valve — VendHub-flagged leads shouldn't be huge
-                break
-    except Exception as e:
-        log(f"  ⚠ EOD email: Could not query VendHub-flagged leads: {e}")
-        return []
 
-    log(f"  🏢 VendHub search returned {len(vh_leads)} leads with the field populated")
+    def _run_search(query_str, label):
+        """Run one search query, paginate, return list of lead dicts."""
+        found = []
+        skip = 0
+        try:
+            while True:
+                data = close_get("lead", {
+                    "query":   query_str,
+                    "_fields": lead_fields,
+                    "_limit":  100,
+                    "_skip":   skip,
+                })
+                batch = data.get("data", [])
+                found.extend(batch)
+                if not data.get("has_more"):
+                    break
+                skip += len(batch) or 100
+                if skip > 2000:
+                    break
+        except Exception as e:
+            log(f"  ⚠ VendHub search '{label}' failed: {e}")
+        log(f"  🏢 VendHub search '{label}': {len(found)} leads")
+        return found
 
-    # Step 2+3 — for each, fetch meetings and check if any is today.
+    # Try multiple search strategies. Even if one syntax doesn't work in Close,
+    # the others should catch what we need.
+    strategies = [
+        ('custom.[VendHub Call]:*',                 "field-label wildcard"),
+        ('custom.[VendHub Call]:"Standard Booking"', "field-label exact-value"),
+        (f'custom_field.{CF_VENDHUB}:*',            "field-id wildcard"),
+    ]
+
+    all_vh_leads = {}  # lid -> lead dict, dedupe
+    for query, label in strategies:
+        for lead in _run_search(query, label):
+            lid = lead.get("id")
+            if lid and lid not in all_vh_leads:
+                all_vh_leads[lid] = lead
+
+    # Local filter — belt+suspenders — keep only leads that actually have the
+    # VendHub Call field populated (search may return false positives).
+    vh_leads_confirmed = [
+        l for l in all_vh_leads.values()
+        if (l.get(f"custom.{CF_VENDHUB}") or "").strip()
+    ]
+    log(f"  🏢 VendHub search union: {len(all_vh_leads)} leads → "
+        f"{len(vh_leads_confirmed)} confirmed VendHub-flagged")
+
+    # Per-lead meeting check — this is proven to work via the diagnostic script.
     matched = []
-    for lead in vh_leads:
+    for lead in vh_leads_confirmed:
         lid = lead.get("id")
         if not lid:
             continue
         try:
             m_data = close_get("activity/meeting", {
                 "lead_id": lid,
-                "_limit":  50,   # single-lead cap — most leads have <10 total meetings
+                "_limit":  50,
             })
         except Exception as e:
-            log(f"  ⚠ EOD email: Could not fetch meetings for VendHub lead {lid}: {e}")
+            log(f"  ⚠ Meeting query for VendHub lead {lid} failed: {e}")
             continue
-        meetings = m_data.get("data", [])
-        # Any meeting starting today PT that isn't canceled/declined?
-        has_meeting_today = False
-        for m in meetings:
+        for m in m_data.get("data", []):
             starts_at = m.get("starts_at")
             if not starts_at:
                 continue
@@ -2948,12 +2967,11 @@ def fetch_vendhub_flagged_leads_active_today(today):
             except (ValueError, TypeError):
                 continue
             if day_start_pt <= s_dt < day_end_pt:
-                has_meeting_today = True
+                matched.append(lead)
                 break
-        if has_meeting_today:
-            matched.append(lead)
 
-    log(f"  🏢 VendHub leads with meeting today: {len(matched)} of {len(vh_leads)} flagged")
+    log(f"  🏢 VendHub leads with meeting today: {len(matched)} of "
+        f"{len(vh_leads_confirmed)} flagged")
     return matched
 
 
