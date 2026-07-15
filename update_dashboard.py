@@ -2867,6 +2867,61 @@ def fetch_meetings_created_today(today):
     return results
 
 
+def fetch_meetings_starting_today(today):
+    """Fetch all meeting activities whose starts_at falls on today (PT day).
+    Used by the EOD email's VendHub Calls section to catch meetings happening
+    today regardless of who's on `user_id` — Calendly integrations often set
+    user_id to a bot/integration user instead of the human rep, which is why
+    the per-rep fetch in fetch_rep_total_meetings misses them.
+
+    No user_id filter here — we get every meeting on any calendar today, then
+    filter downstream by looking up the actual lead's owner + VendHub field.
+
+    Returns [{lead_id, user_id, starts_at, date_created}, ...]. Empty on error
+    (logged). Deduplicates on lead_id since a lead may have multiple meeting
+    records for the same slot (e.g., a reschedule).
+    """
+    day_start_pt = datetime(today.year, today.month, today.day, tzinfo=PACIFIC)
+    day_end_pt   = day_start_pt + timedelta(days=1)
+    start_utc    = day_start_pt.astimezone(timezone.utc).isoformat()
+    end_utc      = day_end_pt.astimezone(timezone.utc).isoformat()
+
+    results = []
+    seen    = set()
+    skip    = 0
+    try:
+        while True:
+            data = close_get("activity/meeting", {
+                "starts_at__gte": start_utc,
+                "starts_at__lt":  end_utc,
+                "_limit":         100,
+                "_skip":          skip,
+            })
+            batch = data.get("data", [])
+            for m in batch:
+                lid = m.get("lead_id")
+                if not lid or lid in seen:
+                    continue
+                # Skip canceled/declined meetings — matches fetch_rep_total_meetings' filter.
+                status = (m.get("status") or "").lower()
+                if status.startswith(("canceled", "declined")):
+                    continue
+                seen.add(lid)
+                results.append({
+                    "lead_id":      lid,
+                    "user_id":      m.get("user_id"),
+                    "starts_at":    m.get("starts_at"),
+                    "date_created": m.get("date_created"),
+                })
+            if not data.get("has_more"):
+                break
+            skip += len(batch) or 100
+    except Exception as e:
+        log(f"  ⚠ EOD email: Could not fetch today's starting meetings: {e}")
+        return []
+    return results
+
+
 def fetch_leads_for_email(lead_ids):
     """
     Fetch leads with all fields the EOD email needs.
@@ -3122,18 +3177,17 @@ def build_eod_data(rolling_data, today):
     # happened months ago, so their FSCBD is NOT today. Iterating only
     # today_lead_ids (which is FSCBD-based) misses every VendHub call.
     #
-    # The correct signal is meetings occurring today, regardless of FSCBD:
-    #   • today_lead_ids           — new sales calls happening today (FSCBD == today)
-    #   • non_new_meetings (today) — follow-up/reschedule meetings on team calendars today
-    #                                (this is where VendHub calls live)
+    # We can't rely on non_new_meetings either — that's populated by
+    # fetch_rep_total_meetings which drops meetings whose user_id isn't in
+    # ALL_LANE_REPS. Calendly integrations often set user_id to the
+    # integration/bot user instead of the human rep, so those meetings vanish.
     #
-    # Union of both = all lead_ids whose meetings are happening today. We fetch
-    # any lead not already in email_leads with just the fields we need for
-    # VendHub attribution (owner + VendHub Call + show_up).
-    non_new_today_lids = [
-        m["lead_id"] for m in rolling_data.get("non_new_meetings", [])
-        if m.get("meeting_date") == today and m.get("lead_id")
-    ]
+    # Correct signal: query meetings today by starts_at only (no user_id
+    # filter), then look up each lead's actual owner + VendHub field to decide
+    # whether it counts. Also union with today_lead_ids to be safe in case a
+    # VendHub call is also a first-time sales call.
+    meetings_today = fetch_meetings_starting_today(today)
+    non_new_today_lids = [m["lead_id"] for m in meetings_today]
     all_today_lids = list(dict.fromkeys(today_lead_ids + non_new_today_lids))  # dedupe, preserve order
 
     # Fetch any lead not already in email_leads.
@@ -3161,7 +3215,11 @@ def build_eod_data(rolling_data, today):
         if not vh_val:
             continue
         owner_uid  = lead.get(f"custom.{CF_LEAD_OWNER_NAME}") or ""
-        owner_name = user_map.get(owner_uid) or f"User {owner_uid[:10]}…" if owner_uid else "(no owner)"
+        # Only count leads owned by a lane rep (skips leads owned by non-team users
+        # like admin accounts, historical reps not in ALL_LANE_REPS anymore, etc.)
+        if owner_uid not in ALL_LANE_REPS:
+            continue
+        owner_name = user_map.get(owner_uid) or ALL_LANE_REP_NAMES.get(owner_uid) or f"User {owner_uid[:10]}…"
         if owner_name not in vendhub_by_owner:
             vendhub_by_owner[owner_name] = {"booked": 0, "shown": 0}
         vendhub_by_owner[owner_name]["booked"] += 1
