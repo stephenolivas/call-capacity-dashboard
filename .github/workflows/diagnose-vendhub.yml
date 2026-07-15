@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       emails:
-        description: 'Lead email addresses to diagnose (comma or newline separated)'
+        description: 'Email addresses OR Close lead_ids (comma or newline separated). Lead_ids are more reliable — grab from app.close.com/lead/<LEAD_ID>/'
         required: true
         type: string
 
