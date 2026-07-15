@@ -2867,6 +2867,96 @@ def fetch_meetings_created_today(today):
     return results
 
 
+def fetch_vendhub_flagged_leads_active_today(today):
+    """Fetch VendHub-flagged leads that have a meeting occurring today.
+
+    Approach:
+      1. Query Close for every lead whose VendHub Call custom field is
+         populated (typically a small set — dozens across the org).
+      2. For each such lead, fetch its meetings via /activity/meeting/?lead_id=X
+         (targeted query, no user_id filter, no cross-org pagination).
+      3. Filter locally to meetings whose starts_at falls on today PT.
+      4. Return only leads that have at least one meeting today.
+
+    This is much more targeted than the broad org-wide meetings query — which
+    can miss records due to pagination limits and sorting — because we ask
+    Close directly "give me THIS lead's meetings" and get all of them back.
+
+    Returns a list of lead dicts with the fields we need for VendHub attribution.
+    """
+    day_start_pt  = datetime(today.year, today.month, today.day, tzinfo=PACIFIC)
+    day_end_pt    = day_start_pt + timedelta(days=1)
+
+    # Step 1 — find every VendHub-flagged lead. Close's search syntax:
+    # `custom.[VendHub Call]:*` matches leads where the field is populated.
+    lead_fields = ",".join([
+        "id",
+        "display_name",
+        f"custom.{CF_LEAD_OWNER_NAME}",
+        f"custom.{CF_VENDHUB}",
+        f"custom.{CF_SHOW_UP}",
+    ])
+    vh_leads = []
+    skip = 0
+    try:
+        while True:
+            data = close_get("lead", {
+                "query":   "custom.[VendHub Call]:*",
+                "_fields": lead_fields,
+                "_limit":  100,
+                "_skip":   skip,
+            })
+            batch = data.get("data", [])
+            vh_leads.extend(batch)
+            if not data.get("has_more"):
+                break
+            skip += len(batch) or 100
+            if skip > 2000:  # sanity valve — VendHub-flagged leads shouldn't be huge
+                break
+    except Exception as e:
+        log(f"  ⚠ EOD email: Could not query VendHub-flagged leads: {e}")
+        return []
+
+    log(f"  🏢 VendHub search returned {len(vh_leads)} leads with the field populated")
+
+    # Step 2+3 — for each, fetch meetings and check if any is today.
+    matched = []
+    for lead in vh_leads:
+        lid = lead.get("id")
+        if not lid:
+            continue
+        try:
+            m_data = close_get("activity/meeting", {
+                "lead_id": lid,
+                "_limit":  50,   # single-lead cap — most leads have <10 total meetings
+            })
+        except Exception as e:
+            log(f"  ⚠ EOD email: Could not fetch meetings for VendHub lead {lid}: {e}")
+            continue
+        meetings = m_data.get("data", [])
+        # Any meeting starting today PT that isn't canceled/declined?
+        has_meeting_today = False
+        for m in meetings:
+            starts_at = m.get("starts_at")
+            if not starts_at:
+                continue
+            status = (m.get("status") or "").lower()
+            if status.startswith(("canceled", "declined")):
+                continue
+            try:
+                s_dt = datetime.fromisoformat(starts_at.replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                continue
+            if day_start_pt <= s_dt < day_end_pt:
+                has_meeting_today = True
+                break
+        if has_meeting_today:
+            matched.append(lead)
+
+    log(f"  🏢 VendHub leads with meeting today: {len(matched)} of {len(vh_leads)} flagged")
+    return matched
+
+
 def fetch_meetings_starting_today(today):
     """Fetch all meeting activities whose starts_at falls on today (PT day).
     Used by the EOD email's VendHub Calls section to catch meetings happening
@@ -3228,28 +3318,38 @@ def build_eod_data(rolling_data, today):
     # happened months ago, so their FSCBD is NOT today. Iterating only
     # today_lead_ids (which is FSCBD-based) misses every VendHub call.
     #
-    # We combine THREE signals to be robust:
-    #   1) today_lead_ids                   — FSCBD == today (belt+suspenders)
-    #   2) non_new_meetings @ today         — per-rep meeting query, catches meetings
-    #                                          whose user_id IS a lane rep
-    #   3) fetch_meetings_starting_today()  — broad meeting query, catches Calendly-
-    #                                          booked meetings where user_id is a bot
-    # Union all three, then filter by lead's actual OWNER + VendHub Call field.
-    # If any signal fails, we still get results from the others.
+    # We combine FOUR signals to be robust:
+    #   1) today_lead_ids                              — FSCBD == today (rare for VendHub)
+    #   2) non_new_meetings @ today                    — per-rep meeting query
+    #   3) fetch_meetings_starting_today()             — broad meeting query
+    #   4) fetch_vendhub_flagged_leads_active_today()  — lead-based query on the
+    #      VendHub Call field + today's activity (via date_updated). This is the
+    #      strongest signal for follow-up VendHub calls whose meetings may be
+    #      logged as phone calls or on non-standard calendars.
+    # Union all four, then filter by lead's actual OWNER + VendHub Call field.
     non_new_today_lids = [
         m["lead_id"] for m in rolling_data.get("non_new_meetings", [])
         if m.get("meeting_date") == today and m.get("lead_id")
     ]
-    meetings_today     = fetch_meetings_starting_today(today)
-    meetings_today_lids = [m["lead_id"] for m in meetings_today]
+    meetings_today       = fetch_meetings_starting_today(today)
+    meetings_today_lids  = [m["lead_id"] for m in meetings_today]
+    vh_active_leads      = fetch_vendhub_flagged_leads_active_today(today)
+    vh_active_lids       = [l["id"] for l in vh_active_leads if l.get("id")]
 
-    log(f"  🏢 VendHub lead-id sources: {len(today_lead_ids)} from FSCBD-today · "
-        f"{len(non_new_today_lids)} from per-rep non-new · "
-        f"{len(meetings_today_lids)} from broad meetings-today")
+    # Prime email_leads with the lead dicts we already fetched — saves round-trips.
+    for lead in vh_active_leads:
+        lid = lead.get("id")
+        if lid and (lid not in email_leads or email_leads.get(lid) is None):
+            email_leads[lid] = lead
+
+    log(f"  🏢 VendHub lead-id sources: {len(today_lead_ids)} FSCBD-today · "
+        f"{len(non_new_today_lids)} per-rep non-new · "
+        f"{len(meetings_today_lids)} broad meetings-today · "
+        f"{len(vh_active_lids)} VendHub-flagged + active today")
 
     all_today_lids = list(dict.fromkeys(
-        today_lead_ids + non_new_today_lids + meetings_today_lids
-    ))  # dedupe, preserve order
+        today_lead_ids + non_new_today_lids + meetings_today_lids + vh_active_lids
+    ))
 
     # Fetch any lead not already in email_leads.
     vh_fetch_fields = ",".join([
