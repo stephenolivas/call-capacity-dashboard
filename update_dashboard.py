@@ -2976,109 +2976,59 @@ def fetch_vendhub_flagged_leads_active_today(today):
 
 
 def fetch_meetings_starting_today(today):
-    """Fetch all meeting activities whose starts_at falls on today (PT day).
+    """Fetch all meeting activities whose date_start falls on today (PT day).
     Used by the EOD email's VendHub Calls section to catch meetings happening
     today regardless of who's on `user_id` — Calendly integrations often set
     user_id to a bot/integration user instead of the human rep, which is why
     the per-rep fetch in fetch_rep_total_meetings misses them.
 
-    Strategy: try `starts_at__gte/lt` filter first (efficient if Close accepts it).
-    If it returns nothing or throws, fall back to fetching meetings created in a
-    wide recent window (past 30 days) and filtering locally by parsed starts_at.
+    Uses Close's `date_start__gte/lt` filter (the parameter name Close actually
+    accepts — NOT `starts_at__gte/lt`, which returns 400 Bad Request).
 
     Returns [{lead_id, user_id, starts_at, date_created}, ...]. Dedupes by
     lead_id. Empty on error.
     """
     day_start_pt = datetime(today.year, today.month, today.day, tzinfo=PACIFIC)
     day_end_pt   = day_start_pt + timedelta(days=1)
-    start_utc    = day_start_pt.astimezone(timezone.utc).isoformat()
-    end_utc      = day_end_pt.astimezone(timezone.utc).isoformat()
+    start_iso    = day_start_pt.astimezone(timezone.utc).isoformat()
+    end_iso      = day_end_pt.astimezone(timezone.utc).isoformat()
 
-    def _keep_meeting(m, seen):
-        lid = m.get("lead_id")
-        if not lid or lid in seen:
-            return None
-        status = (m.get("status") or "").lower()
-        if status.startswith(("canceled", "declined")):
-            return None
-        return {
-            "lead_id":      lid,
-            "user_id":      m.get("user_id"),
-            "starts_at":    m.get("starts_at"),
-            "date_created": m.get("date_created"),
-        }
-
-    # ── Path A: direct starts_at filter (fast, if Close accepts it) ──
     results = []
     seen    = set()
     skip    = 0
     try:
         while True:
             data = close_get("activity/meeting", {
-                "starts_at__gte": start_utc,
-                "starts_at__lt":  end_utc,
-                "_limit":         100,
-                "_skip":          skip,
+                "date_start__gte": start_iso,
+                "date_start__lt":  end_iso,
+                "_limit":          100,
+                "_skip":           skip,
             })
             batch = data.get("data", [])
             for m in batch:
-                kept = _keep_meeting(m, seen)
-                if kept:
-                    seen.add(kept["lead_id"])
-                    results.append(kept)
+                lid = m.get("lead_id")
+                if not lid or lid in seen:
+                    continue
+                status = (m.get("status") or "").lower()
+                if status.startswith(("canceled", "declined")):
+                    continue
+                seen.add(lid)
+                results.append({
+                    "lead_id":      lid,
+                    "user_id":      m.get("user_id"),
+                    "starts_at":    m.get("starts_at"),
+                    "date_created": m.get("date_created"),
+                })
             if not data.get("has_more"):
                 break
             skip += len(batch) or 100
-            if skip > 2000:  # safety valve — shouldn't happen for a single day
+            if skip > 2000:
                 break
-        if results:
-            log(f"  🏢 fetch_meetings_starting_today: {len(results)} meetings via starts_at filter")
-            return results
     except Exception as e:
-        log(f"  ⚠ EOD email: starts_at filter failed ({e}), falling back to local filter")
-
-    # ── Path B: fetch recently-created meetings, filter locally by starts_at ──
-    # Meetings created in the last 30 days should cover anything happening today
-    # (VendHub calls are usually booked within a couple weeks of the meeting).
-    log(f"  🏢 fetch_meetings_starting_today: falling back to broad date_created query")
-    window_start = (day_start_pt - timedelta(days=30)).astimezone(timezone.utc).isoformat()
-    window_end   = day_end_pt.astimezone(timezone.utc).isoformat()
-    skip = 0
-    try:
-        while True:
-            data = close_get("activity/meeting", {
-                "date_created__gte": window_start,
-                "date_created__lt":  window_end,
-                "_limit":            100,
-                "_skip":             skip,
-            })
-            batch = data.get("data", [])
-            for m in batch:
-                # Parse starts_at and check if it falls on today PT
-                starts_at = m.get("starts_at")
-                if not starts_at:
-                    continue
-                try:
-                    starts_dt = datetime.fromisoformat(starts_at.replace("Z", "+00:00"))
-                    starts_pt = starts_dt.astimezone(PACIFIC).date()
-                except (ValueError, TypeError):
-                    continue
-                if starts_pt != today:
-                    continue
-                kept = _keep_meeting(m, seen)
-                if kept:
-                    seen.add(kept["lead_id"])
-                    results.append(kept)
-            if not data.get("has_more"):
-                break
-            skip += len(batch) or 100
-            if skip > 5000:
-                break
-        log(f"  🏢 fetch_meetings_starting_today: {len(results)} meetings via local filter")
-        return results
-    except Exception as e:
-        log(f"  ⚠ EOD email: broad meeting fetch also failed: {e}")
+        log(f"  ⚠ EOD email: date_start meeting query failed: {e}")
         return []
+    log(f"  🏢 fetch_meetings_starting_today: {len(results)} meetings via date_start filter")
+    return results
 
 
 def fetch_leads_for_email(lead_ids):
