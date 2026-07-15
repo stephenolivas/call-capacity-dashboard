@@ -3,8 +3,12 @@
 diagnose_vendhub.py — Inspect specific leads to figure out why they aren't
 showing up in the EOD email's VendHub Calls section.
 
-For each email address passed in, this script:
-  1. Searches Close for a lead matching the email
+Accepts either **email addresses** or **Close lead_ids** (starting with lead_).
+Lead IDs are more reliable — Close's email-based search sometimes 404s.
+Grab lead_id from the URL: app.close.com/lead/<LEAD_ID>/
+
+For each lead, this script:
+  1. Fetches the lead from Close
   2. Prints the lead's key fields (owner, FSCBD, funnel, VendHub Call, status)
   3. Reports whether the lead would pass each filter gate in build_eod_data
      — Lane filter, FSCBD-is-today filter, VendHub-populated filter
@@ -12,11 +16,12 @@ For each email address passed in, this script:
 Doesn't send any email or modify anything. Just reads and reports.
 
 Usage (locally):
-  CLOSE_API_KEY=xxx python diagnose_vendhub.py mberna99@gmail.com john.l.green3@gmail.com
+  CLOSE_API_KEY=xxx python diagnose_vendhub.py lead_pUCvjyj... lead_hvFwM6T... lead_FGaVKrB...
+  CLOSE_API_KEY=xxx python diagnose_vendhub.py mberna99@gmail.com
 
 Usage (via GitHub Actions):
-  Trigger the "Diagnose VendHub" workflow (see diagnose-vendhub.yml) —
-  paste emails as the input, run, view results in the run logs.
+  Trigger the "Diagnose VendHub" workflow — paste emails OR lead_ids as the input,
+  run, view results in the run logs.
 """
 
 import os
@@ -28,34 +33,46 @@ import update_dashboard as ud
 
 
 def find_lead_by_email(email):
-    """Find a lead using Close's search endpoint. Returns the first lead dict
-    with all fields, or None if not found."""
+    """Find a lead using Close's /lead/ list endpoint with an email query.
+    Returns the first matching lead dict, or None if not found.
+    (Note: /data/search 404s for query strings; /lead/?query=... is the
+    supported search pattern.)"""
     try:
-        data = ud.close_get("data/search", {
-            "query": f'email_address:"{email}"',
+        data = ud.close_get("lead", {
+            "query": f'email:"{email}"',
             "_limit": 5,
         })
         results = data.get("data", [])
         if not results:
             return None
-        # data/search returns lead summaries; fetch full lead by id
-        lid = results[0].get("id")
-        if not lid:
-            return None
-        return ud.close_get(f"lead/{lid}")
+        return results[0]  # /lead/ already returns full lead objects
     except Exception as e:
         print(f"    ⚠ search failed: {e}")
         return None
 
 
-def diagnose(email):
+def fetch_lead_by_id(lid):
+    """Fetch a lead directly by its Close lead_id."""
+    try:
+        return ud.close_get(f"lead/{lid}")
+    except Exception as e:
+        print(f"    ⚠ fetch by id failed: {e}")
+        return None
+
+
+def diagnose(identifier):
+    """`identifier` can be either an email address or a Close lead_id (starts with lead_)."""
     print(f"\n{'═' * 70}")
-    print(f"  {email}")
+    print(f"  {identifier}")
     print("═" * 70)
 
-    lead = find_lead_by_email(email)
+    if identifier.startswith("lead_"):
+        lead = fetch_lead_by_id(identifier)
+    else:
+        lead = find_lead_by_email(identifier)
+
     if not lead:
-        print("  ❌ No lead found for this email in Close.")
+        print("  ❌ No lead found in Close.")
         return
 
     lid    = lead.get("id", "(no id)")
@@ -126,22 +143,22 @@ def diagnose(email):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python diagnose_vendhub.py email1 [email2 ...]")
+        print("Usage: python diagnose_vendhub.py email1|lead_id1 [email2|lead_id2 ...]")
         print("       or set VENDHUB_EMAILS env var (comma/newline separated)")
         # Also accept env var so the GitHub Actions workflow can pass a list
         env_val = os.environ.get("VENDHUB_EMAILS", "").strip()
         if not env_val:
             sys.exit(1)
         import re
-        emails = [e.strip() for e in re.split(r"[,;\s]+", env_val) if e.strip()]
+        identifiers = [e.strip() for e in re.split(r"[,;\s]+", env_val) if e.strip()]
     else:
-        emails = sys.argv[1:]
+        identifiers = sys.argv[1:]
 
-    print(f"Diagnosing {len(emails)} lead(s)...")
+    print(f"Diagnosing {len(identifiers)} lead(s)...")
     print(f"Current PT date: {datetime.now(ud.PACIFIC).date().isoformat()}")
 
-    for email in emails:
-        diagnose(email)
+    for identifier in identifiers:
+        diagnose(identifier)
 
     print(f"\n{'═' * 70}")
     print("Done.")
