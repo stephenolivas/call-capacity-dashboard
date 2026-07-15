@@ -107,38 +107,67 @@ def diagnose(identifier):
     print(f"    Owner in ALL_LANE_REPS?  "
           f"{'✓ yes — ' + owner_nm if in_lane else '✗ NO — this is the drop point'}")
 
-    # Gate 2 — FSCBD is today
-    fscbd_raw = lead.get("custom.cf_LFdYEQ6bsgp49YjZzefypDmdVx8iwuakWDSLPLpVrBq")
-    today_pt  = datetime.now(ud.PACIFIC).date().isoformat()
-    is_today  = fscbd_raw == today_pt
-    print(f"    FSCBD == today ({today_pt})?  "
-          f"{'✓ yes' if is_today else f'✗ NO — FSCBD is {fscbd_raw!r}'}")
-
-    # Gate 3 — VendHub field is populated (any truthy value)
+    # Gate 2 — VendHub Call field is populated
     vh_raw   = lead.get(f"custom.{ud.CF_VENDHUB}")
     vh_type  = type(vh_raw).__name__
     vh_empty = not vh_raw or (isinstance(vh_raw, str) and not vh_raw.strip())
     print(f"    VendHub Call populated?  "
           f"{'✓ yes (type: ' + vh_type + ')' if not vh_empty else '✗ NO — value is falsy'}")
 
+    # Gate 3 — Has a meeting today PT (per-lead meeting query, matches production)
+    from datetime import timedelta as _td
+    lid = lead.get("id")
+    day_start_pt = datetime(datetime.now(ud.PACIFIC).year, datetime.now(ud.PACIFIC).month,
+                             datetime.now(ud.PACIFIC).day, tzinfo=ud.PACIFIC)
+    day_end_pt = day_start_pt + _td(days=1)
+    meeting_today = None
+    try:
+        m_data = ud.close_get("activity/meeting", {"lead_id": lid, "_limit": 50})
+        for m in m_data.get("data", []):
+            starts_at = m.get("starts_at")
+            if not starts_at:
+                continue
+            status = (m.get("status") or "").lower()
+            if status.startswith(("canceled", "declined")):
+                continue
+            try:
+                s_dt = datetime.fromisoformat(starts_at.replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                continue
+            if day_start_pt <= s_dt < day_end_pt:
+                meeting_today = m
+                break
+    except Exception as e:
+        print(f"    ⚠ Meeting query failed: {e}")
+
+    if meeting_today:
+        print(f"    Has meeting today?  ✓ yes — '{meeting_today.get('title', '?')}' at {meeting_today.get('starts_at')} "
+              f"(status: {meeting_today.get('status')!r})")
+    else:
+        print(f"    Has meeting today?  ✗ NO — no /activity/meeting/ record with starts_at in today PT")
+
+    # FSCBD (info only)
+    fscbd_raw = lead.get("custom.cf_LFdYEQ6bsgp49YjZzefypDmdVx8iwuakWDSLPLpVrBq")
+    print(f"    FSCBD (info only, not a gate):  {fscbd_raw!r}")
+
     # Overall
     print()
-    would_count = in_lane and is_today and not vh_empty
+    would_count = in_lane and not vh_empty and meeting_today is not None
     if would_count:
         print("  ✅ VERDICT: This lead SHOULD be counted in VendHub Calls.")
-        print("     If it isn't, something else is wrong — share this output.")
+        print("     Via the 'VendHub-flagged + meeting today' signal in build_eod_data.")
     else:
         print("  ❌ VERDICT: This lead would NOT be counted. Reason:")
         if not in_lane:
-            print("     → Lead owner isn't in ALL_LANE_REPS. Either the lead isn't")
-            print("       assigned to a Lane 1/Lane 2 rep, or that rep needs to be")
-            print("       added to the lane sets in update_dashboard.py.")
-        if not is_today:
-            print("     → FSCBD isn't today's date. VendHub aggregation only")
-            print("       considers leads with FSCBD == today (Pacific).")
+            print("     → Lead owner isn't in ALL_LANE_REPS.")
         if vh_empty:
-            print("     → VendHub Call field is empty. The dropdown needs to have")
-            print("       a value selected — the field can't just be labeled.")
+            print("     → VendHub Call field is empty.")
+        if not meeting_today:
+            print("     → No meeting today. The /activity/meeting/ endpoint returned no record")
+            print("       for this lead with starts_at falling in today PT. This is the same")
+            print("       signal build_eod_data uses — so if the meeting exists in Close but")
+            print("       isn't showing here, it's likely stored differently (e.g., as a call")
+            print("       activity) OR the meeting record has a status like 'canceled'.")
 
 
 def main():
