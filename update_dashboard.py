@@ -3118,12 +3118,42 @@ def build_eod_data(rolling_data, today):
         })
 
     # ── VendHub Calls by Rep ──────────────────────────────────────────────────
-    # Any of today's leads whose VendHub Call field is populated (dropdown has
-    # 2 options, both count). Grouped by lead owner; user_id resolved via
-    # user_map (which we already fetched for the Closers list). Show rate is
-    # per-owner: # Yes / # booked on their VendHub-flagged leads today.
+    # VendHub calls are follow-up sales calls — the lead's FIRST call already
+    # happened months ago, so their FSCBD is NOT today. Iterating only
+    # today_lead_ids (which is FSCBD-based) misses every VendHub call.
+    #
+    # The correct signal is meetings occurring today, regardless of FSCBD:
+    #   • today_lead_ids           — new sales calls happening today (FSCBD == today)
+    #   • non_new_meetings (today) — follow-up/reschedule meetings on team calendars today
+    #                                (this is where VendHub calls live)
+    #
+    # Union of both = all lead_ids whose meetings are happening today. We fetch
+    # any lead not already in email_leads with just the fields we need for
+    # VendHub attribution (owner + VendHub Call + show_up).
+    non_new_today_lids = [
+        m["lead_id"] for m in rolling_data.get("non_new_meetings", [])
+        if m.get("meeting_date") == today and m.get("lead_id")
+    ]
+    all_today_lids = list(dict.fromkeys(today_lead_ids + non_new_today_lids))  # dedupe, preserve order
+
+    # Fetch any lead not already in email_leads.
+    vh_fetch_fields = ",".join([
+        "id",
+        f"custom.{CF_LEAD_OWNER_NAME}",
+        f"custom.{CF_VENDHUB}",
+        f"custom.{CF_SHOW_UP}",
+    ])
+    for lid in all_today_lids:
+        if lid in email_leads and email_leads[lid] is not None:
+            continue
+        try:
+            email_leads[lid] = close_get(f"lead/{lid}", {"_fields": vh_fetch_fields})
+        except Exception as e:
+            log(f"  ⚠ EOD email: Could not fetch VendHub candidate lead {lid}: {e}")
+            email_leads[lid] = None
+
     vendhub_by_owner = {}  # display_name -> {"booked": count, "shown": count}
-    for lid in today_lead_ids:
+    for lid in all_today_lids:
         lead = email_leads.get(lid)
         if not lead:
             continue
@@ -3663,6 +3693,12 @@ def main():
     for d in non_new_meetings_by_date:
         non_new_meetings_by_date[d].sort(key=lambda r: (_category_order[r["category"]], r["lead_name"].lower()))
     team_data["non_new_meetings_by_date"] = non_new_meetings_by_date
+    # Also attach the raw non_new_meetings list — the EOD email's VendHub section
+    # needs lead_ids of TODAY's follow-up meetings (VendHub calls are follow-ups, so
+    # their FSCBD is months in the past — the FSCBD-based today_lead_ids doesn't
+    # catch them). Using raw (not visible_non_new) so clamped-rep VendHub calls
+    # would still count in the unlikely event they happen.
+    team_data["non_new_meetings"] = non_new_meetings
     # ────────────────────────────────────────────────────────────────────────────
 
     # ── LANE-MERGE TRANSITION (2026-06-17) ──────────────────────────────────────
