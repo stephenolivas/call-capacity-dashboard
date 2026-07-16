@@ -3198,80 +3198,60 @@ def build_eod_data(rolling_data, today):
         })
 
     # ── VendHub Calls by Rep ──────────────────────────────────────────────────
-    # VendHub calls are follow-up sales calls — the lead's FIRST call already
-    # happened months ago, so their FSCBD is NOT today. Iterating only
-    # today_lead_ids (which is FSCBD-based) misses every VendHub call.
+    # Two criteria, per user spec:
+    #   1) VendHub Call field is populated
+    #   2) The lead has ANY meeting today (starts_at on today PT, not canceled)
     #
-    # We combine FOUR signals to be robust:
-    #   1) today_lead_ids                              — FSCBD == today (rare for VendHub)
-    #   2) non_new_meetings @ today                    — per-rep meeting query
-    #   3) fetch_meetings_starting_today()             — broad meeting query
-    #   4) fetch_vendhub_flagged_leads_active_today()  — lead-based query on the
-    #      VendHub Call field + today's activity (via date_updated). This is the
-    #      strongest signal for follow-up VendHub calls whose meetings may be
-    #      logged as phone calls or on non-standard calendars.
-    # Union all four, then filter by lead's actual OWNER + VendHub Call field.
+    # CRITICAL: this section uses its OWN lead cache (vh_leads), NOT the shared
+    # email_leads dict. Other sections (scraper set-today) fetch leads into
+    # email_leads with PARTIAL field sets (funnel+setter only, no VendHub field).
+    # Close omits empty/unrequested custom fields from responses, so a cached
+    # partial dict is indistinguishable from "VendHub field is empty" — which
+    # silently dropped VendHub leads whenever the scraper section fetched them
+    # first. Fetching fresh with a guaranteed field set eliminates that race.
     non_new_today_lids = [
         m["lead_id"] for m in rolling_data.get("non_new_meetings", [])
         if m.get("meeting_date") == today and m.get("lead_id")
     ]
-    meetings_today       = fetch_meetings_starting_today(today)
-    meetings_today_lids  = [m["lead_id"] for m in meetings_today]
-    vh_active_leads      = fetch_vendhub_flagged_leads_active_today(today)
-    vh_active_lids       = [l["id"] for l in vh_active_leads if l.get("id")]
+    meetings_today      = fetch_meetings_starting_today(today)
+    meetings_today_lids = [m["lead_id"] for m in meetings_today]
 
-    # Prime email_leads with the lead dicts we already fetched — saves round-trips.
-    for lead in vh_active_leads:
-        lid = lead.get("id")
-        if lid and (lid not in email_leads or email_leads.get(lid) is None):
-            email_leads[lid] = lead
-
-    log(f"  🏢 VendHub lead-id sources: {len(today_lead_ids)} FSCBD-today · "
-        f"{len(non_new_today_lids)} per-rep non-new · "
-        f"{len(meetings_today_lids)} broad meetings-today · "
-        f"{len(vh_active_lids)} VendHub-flagged + active today")
-
-    all_today_lids = list(dict.fromkeys(
-        today_lead_ids + non_new_today_lids + meetings_today_lids + vh_active_lids
+    vh_candidate_lids = list(dict.fromkeys(
+        today_lead_ids + non_new_today_lids + meetings_today_lids
     ))
+    log(f"  🏢 VendHub candidates: {len(today_lead_ids)} FSCBD-today · "
+        f"{len(non_new_today_lids)} per-rep non-new · "
+        f"{len(meetings_today_lids)} meetings-today → "
+        f"{len(vh_candidate_lids)} unique")
 
-    # Fetch any lead not already in email_leads.
+    # Dedicated cache — every candidate fetched fresh with the exact fields we need.
     vh_fetch_fields = ",".join([
         "id",
         f"custom.{CF_LEAD_OWNER_NAME}",
         f"custom.{CF_VENDHUB}",
         f"custom.{CF_SHOW_UP}",
     ])
-    for lid in all_today_lids:
-        if lid in email_leads and email_leads[lid] is not None:
-            continue
+    vh_leads = {}
+    for lid in vh_candidate_lids:
         try:
-            email_leads[lid] = close_get(f"lead/{lid}", {"_fields": vh_fetch_fields})
+            vh_leads[lid] = close_get(f"lead/{lid}", {"_fields": vh_fetch_fields})
         except Exception as e:
             log(f"  ⚠ EOD email: Could not fetch VendHub candidate lead {lid}: {e}")
-            email_leads[lid] = None
-
-    vendhub_by_owner = {}  # display_name -> {"booked": count, "shown": count}
-    vh_flagged_count = 0
-    vh_verified_count = 0
+            vh_leads[lid] = None
 
     def _lead_has_meeting_today(lid):
-        """Authoritative check: query Close directly for this lead's meetings
-        and confirm at least one has starts_at in today PT (not canceled).
-        This is the SAME logic the diagnostic script uses. Prevents stale
-        meeting records or over-inclusive source queries from over-counting."""
+        """Authoritative check (same logic as diagnose_vendhub.py, which is
+        proven to find the meetings): query this lead's meetings directly and
+        confirm at least one starts today PT and isn't canceled/declined."""
         try:
-            m_data = close_get("activity/meeting", {
-                "lead_id": lid,
-                "_limit":  50,
-            })
+            m_data = close_get("activity/meeting", {"lead_id": lid, "_limit": 50})
         except Exception as e:
             log(f"  ⚠ VendHub verification fetch failed for {lid}: {e}")
             return False
         day_start_pt = datetime(today.year, today.month, today.day, tzinfo=PACIFIC)
         day_end_pt   = day_start_pt + timedelta(days=1)
         for m in m_data.get("data", []):
-            starts_at = m.get("starts_at")
+            starts_at = m.get("starts_at") or m.get("date_start")
             if not starts_at:
                 continue
             status = (m.get("status") or "").lower()
@@ -3285,22 +3265,23 @@ def build_eod_data(rolling_data, today):
                 return True
         return False
 
-    for lid in all_today_lids:
-        lead = email_leads.get(lid)
+    vendhub_by_owner  = {}  # display_name -> {"booked": count, "shown": count}
+    vh_flagged_count  = 0
+    vh_verified_count = 0
+    for lid in vh_candidate_lids:
+        lead = vh_leads.get(lid)
         if not lead:
             continue
+        # Criterion 1 — VendHub Call populated (guaranteed-requested field).
         vh_val = (lead.get(f"custom.{CF_VENDHUB}") or "").strip()
         if not vh_val:
             continue
         vh_flagged_count += 1
         owner_uid = lead.get(f"custom.{CF_LEAD_OWNER_NAME}") or ""
-        # Only count leads owned by a lane rep.
         if owner_uid not in ALL_LANE_REPS:
             continue
-        # Authoritative per-lead meeting-today verification. Same logic as
-        # diagnose_vendhub.py. Filters out stale records / spurious inclusions
-        # from the source union (e.g., non_new_meetings with weird meeting_date
-        # or Close returning a stale meeting activity).
+        # Criterion 2 — authoritative meeting-today verification. Filters out
+        # stale/spurious candidates (e.g., a lead whose only meeting was days ago).
         if not _lead_has_meeting_today(lid):
             log(f"  🏢 VendHub candidate {lid} flagged but no verified meeting today — skipping")
             continue
@@ -3312,9 +3293,9 @@ def build_eod_data(rolling_data, today):
         if str(lead.get(f"custom.{CF_SHOW_UP}", "")).lower() == "yes":
             vendhub_by_owner[owner_name]["shown"] += 1
 
-    log(f"  🏢 VendHub aggregation: {len(all_today_lids)} candidate leads → "
-        f"{vh_flagged_count} with VendHub flag → "
-        f"{vh_verified_count} verified meeting today (owned by lane reps)")
+    log(f"  🏢 VendHub aggregation: {len(vh_candidate_lids)} candidates → "
+        f"{vh_flagged_count} VendHub-flagged → "
+        f"{vh_verified_count} verified meeting today")
 
     # Sort by booked desc, then name asc, for stable display.
     vendhub_lines = []
