@@ -2868,134 +2868,37 @@ def fetch_meetings_created_today(today):
 
 
 def fetch_vendhub_flagged_leads_active_today(today):
-    """Fetch VendHub-flagged leads that have a meeting occurring today.
-
-    Approach:
-      1. Query Close for VendHub-flagged leads using multiple search strategies
-         (Close's exact search syntax for custom-field-exists is undocumented and
-         the wildcard `:*` may not work reliably — so we try several patterns
-         and union the results).
-      2. For each such lead, fetch its meetings via /activity/meeting/?lead_id=X
-         (proven to work via the diagnostic script).
-      3. Filter locally to meetings whose starts_at falls on today PT.
-      4. Return only leads with at least one meeting today.
-
-    Returns a list of lead dicts with the fields we need.
+    """Deprecated — returns empty. Close's `/lead/?query=...` endpoint doesn't
+    support the custom-field wildcard queries we tried, so this strategy always
+    returned 0. Kept as a stub so build_eod_data's log-line union still works.
+    The reliable VendHub signal now comes from fetch_meetings_starting_today
+    (once its local starts_at filter narrows to actual today meetings) combined
+    with per-lead VendHub-field lookup in the aggregation step.
     """
-    day_start_pt  = datetime(today.year, today.month, today.day, tzinfo=PACIFIC)
-    day_end_pt    = day_start_pt + timedelta(days=1)
-
-    lead_fields = ",".join([
-        "id",
-        "display_name",
-        f"custom.{CF_LEAD_OWNER_NAME}",
-        f"custom.{CF_VENDHUB}",
-        f"custom.{CF_SHOW_UP}",
-    ])
-
-    def _run_search(query_str, label):
-        """Run one search query, paginate, return list of lead dicts."""
-        found = []
-        skip = 0
-        try:
-            while True:
-                data = close_get("lead", {
-                    "query":   query_str,
-                    "_fields": lead_fields,
-                    "_limit":  100,
-                    "_skip":   skip,
-                })
-                batch = data.get("data", [])
-                found.extend(batch)
-                if not data.get("has_more"):
-                    break
-                skip += len(batch) or 100
-                if skip > 2000:
-                    break
-        except Exception as e:
-            log(f"  ⚠ VendHub search '{label}' failed: {e}")
-        log(f"  🏢 VendHub search '{label}': {len(found)} leads")
-        return found
-
-    # Try multiple search strategies. Even if one syntax doesn't work in Close,
-    # the others should catch what we need.
-    strategies = [
-        ('custom.[VendHub Call]:*',                 "field-label wildcard"),
-        ('custom.[VendHub Call]:"Standard Booking"', "field-label exact-value"),
-        (f'custom_field.{CF_VENDHUB}:*',            "field-id wildcard"),
-    ]
-
-    all_vh_leads = {}  # lid -> lead dict, dedupe
-    for query, label in strategies:
-        for lead in _run_search(query, label):
-            lid = lead.get("id")
-            if lid and lid not in all_vh_leads:
-                all_vh_leads[lid] = lead
-
-    # Local filter — belt+suspenders — keep only leads that actually have the
-    # VendHub Call field populated (search may return false positives).
-    vh_leads_confirmed = [
-        l for l in all_vh_leads.values()
-        if (l.get(f"custom.{CF_VENDHUB}") or "").strip()
-    ]
-    log(f"  🏢 VendHub search union: {len(all_vh_leads)} leads → "
-        f"{len(vh_leads_confirmed)} confirmed VendHub-flagged")
-
-    # Per-lead meeting check — this is proven to work via the diagnostic script.
-    matched = []
-    for lead in vh_leads_confirmed:
-        lid = lead.get("id")
-        if not lid:
-            continue
-        try:
-            m_data = close_get("activity/meeting", {
-                "lead_id": lid,
-                "_limit":  50,
-            })
-        except Exception as e:
-            log(f"  ⚠ Meeting query for VendHub lead {lid} failed: {e}")
-            continue
-        for m in m_data.get("data", []):
-            starts_at = m.get("starts_at")
-            if not starts_at:
-                continue
-            status = (m.get("status") or "").lower()
-            if status.startswith(("canceled", "declined")):
-                continue
-            try:
-                s_dt = datetime.fromisoformat(starts_at.replace("Z", "+00:00"))
-            except (ValueError, TypeError):
-                continue
-            if day_start_pt <= s_dt < day_end_pt:
-                matched.append(lead)
-                break
-
-    log(f"  🏢 VendHub leads with meeting today: {len(matched)} of "
-        f"{len(vh_leads_confirmed)} flagged")
-    return matched
+    return []
 
 
 def fetch_meetings_starting_today(today):
-    """Fetch all meeting activities whose date_start falls on today (PT day).
-    Used by the EOD email's VendHub Calls section to catch meetings happening
-    today regardless of who's on `user_id` — Calendly integrations often set
-    user_id to a bot/integration user instead of the human rep, which is why
-    the per-rep fetch in fetch_rep_total_meetings misses them.
+    """Fetch all meeting activities whose starts_at falls on today (PT day).
 
-    Uses Close's `date_start__gte/lt` filter (the parameter name Close actually
-    accepts — NOT `starts_at__gte/lt`, which returns 400 Bad Request).
+    Uses `date_start__gte/lt` as the API-side hint (the only meeting-date filter
+    Close's endpoint accepts — `starts_at__gte/lt` returns 400 Bad Request), BUT
+    the API doesn't strictly enforce it. `fetch_rep_total_meetings` sees this
+    too — it fetches many more raw meetings than the date window contains and
+    filters locally. So we MUST re-check starts_at locally per meeting.
 
-    Returns [{lead_id, user_id, starts_at, date_created}, ...]. Dedupes by
-    lead_id. Empty on error.
+    Returns [{lead_id, user_id, starts_at, date_created, title}, ...] where
+    starts_at is confirmed to fall on today PT. Deduped by lead_id.
     """
     day_start_pt = datetime(today.year, today.month, today.day, tzinfo=PACIFIC)
     day_end_pt   = day_start_pt + timedelta(days=1)
     start_iso    = day_start_pt.astimezone(timezone.utc).isoformat()
     end_iso      = day_end_pt.astimezone(timezone.utc).isoformat()
 
-    results = []
-    seen    = set()
-    skip    = 0
+    results  = []
+    seen     = set()
+    raw_seen = 0
+    skip     = 0
     try:
         while True:
             data = close_get("activity/meeting", {
@@ -3005,9 +2908,20 @@ def fetch_meetings_starting_today(today):
                 "_skip":           skip,
             })
             batch = data.get("data", [])
+            raw_seen += len(batch)
             for m in batch:
                 lid = m.get("lead_id")
                 if not lid or lid in seen:
+                    continue
+                # Local starts_at filter — required because Close's API doesn't strictly enforce.
+                starts_at = m.get("starts_at") or m.get("date_start")
+                if not starts_at:
+                    continue
+                try:
+                    s_dt = datetime.fromisoformat(starts_at.replace("Z", "+00:00"))
+                except (ValueError, TypeError):
+                    continue
+                if not (day_start_pt <= s_dt < day_end_pt):
                     continue
                 status = (m.get("status") or "").lower()
                 if status.startswith(("canceled", "declined")):
@@ -3016,18 +2930,20 @@ def fetch_meetings_starting_today(today):
                 results.append({
                     "lead_id":      lid,
                     "user_id":      m.get("user_id"),
-                    "starts_at":    m.get("starts_at"),
+                    "starts_at":    starts_at,
                     "date_created": m.get("date_created"),
+                    "title":        m.get("title") or "",
                 })
             if not data.get("has_more"):
                 break
             skip += len(batch) or 100
-            if skip > 2000:
+            if skip > 5000:  # safety valve for badly-filtered responses
+                log(f"  ⚠ fetch_meetings_starting_today: hit skip cap at {skip}; may miss meetings")
                 break
     except Exception as e:
         log(f"  ⚠ EOD email: date_start meeting query failed: {e}")
         return []
-    log(f"  🏢 fetch_meetings_starting_today: {len(results)} meetings via date_start filter")
+    log(f"  🏢 fetch_meetings_starting_today: {len(results)} meetings today (from {raw_seen} raw)")
     return results
 
 
