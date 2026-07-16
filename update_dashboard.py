@@ -3253,6 +3253,38 @@ def build_eod_data(rolling_data, today):
 
     vendhub_by_owner = {}  # display_name -> {"booked": count, "shown": count}
     vh_flagged_count = 0
+    vh_verified_count = 0
+
+    def _lead_has_meeting_today(lid):
+        """Authoritative check: query Close directly for this lead's meetings
+        and confirm at least one has starts_at in today PT (not canceled).
+        This is the SAME logic the diagnostic script uses. Prevents stale
+        meeting records or over-inclusive source queries from over-counting."""
+        try:
+            m_data = close_get("activity/meeting", {
+                "lead_id": lid,
+                "_limit":  50,
+            })
+        except Exception as e:
+            log(f"  ⚠ VendHub verification fetch failed for {lid}: {e}")
+            return False
+        day_start_pt = datetime(today.year, today.month, today.day, tzinfo=PACIFIC)
+        day_end_pt   = day_start_pt + timedelta(days=1)
+        for m in m_data.get("data", []):
+            starts_at = m.get("starts_at")
+            if not starts_at:
+                continue
+            status = (m.get("status") or "").lower()
+            if status.startswith(("canceled", "declined")):
+                continue
+            try:
+                s_dt = datetime.fromisoformat(starts_at.replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                continue
+            if day_start_pt <= s_dt < day_end_pt:
+                return True
+        return False
+
     for lid in all_today_lids:
         lead = email_leads.get(lid)
         if not lead:
@@ -3265,6 +3297,14 @@ def build_eod_data(rolling_data, today):
         # Only count leads owned by a lane rep.
         if owner_uid not in ALL_LANE_REPS:
             continue
+        # Authoritative per-lead meeting-today verification. Same logic as
+        # diagnose_vendhub.py. Filters out stale records / spurious inclusions
+        # from the source union (e.g., non_new_meetings with weird meeting_date
+        # or Close returning a stale meeting activity).
+        if not _lead_has_meeting_today(lid):
+            log(f"  🏢 VendHub candidate {lid} flagged but no verified meeting today — skipping")
+            continue
+        vh_verified_count += 1
         owner_name = user_map.get(owner_uid) or ALL_LANE_REP_NAMES.get(owner_uid) or f"User {owner_uid[:10]}…"
         if owner_name not in vendhub_by_owner:
             vendhub_by_owner[owner_name] = {"booked": 0, "shown": 0}
@@ -3274,7 +3314,7 @@ def build_eod_data(rolling_data, today):
 
     log(f"  🏢 VendHub aggregation: {len(all_today_lids)} candidate leads → "
         f"{vh_flagged_count} with VendHub flag → "
-        f"{sum(v['booked'] for v in vendhub_by_owner.values())} owned by lane reps")
+        f"{vh_verified_count} verified meeting today (owned by lane reps)")
 
     # Sort by booked desc, then name asc, for stable display.
     vendhub_lines = []
