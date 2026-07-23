@@ -2709,6 +2709,23 @@ SCRAPER_SETTERS = [
     ("Juan Cajina",       "Juan",     3),
 ]
 
+# Calendly link titles that identify a scraper-booked Next Steps meeting.
+# Mirrors NEXT_STEPS_TITLE_PREFIXES in the Lane 2 dashboard's fetch_data.py —
+# keep the two lists in sync. All titles have prospect + closer appended
+# (e.g. "Vendingpreneur Next Steps with John and Scott Seymour").
+# If a new Calendly link starts producing meetings, add its prefix here AND there.
+NEXT_STEPS_TITLE_PREFIXES = (
+    "Vendingpreneurs Call - Next Steps",
+    "Vendingpreneurs Next Steps Call",
+    "Vendingpreneurs - Next Steps",
+    "Vendingpreneur Next Steps",   # singular, no dash — older Calendly link still in use
+)
+
+
+def is_next_steps_title(title):
+    """True if a meeting title identifies a scraper-booked Next Steps meeting."""
+    return bool(title) and title.strip().startswith(NEXT_STEPS_TITLE_PREFIXES)
+
 # ── Short funnel labels for the email body ────────────────────────────────────
 
 FUNNEL_SHORT = {
@@ -2857,6 +2874,7 @@ def fetch_meetings_created_today(today):
                     "user_id":      m.get("user_id"),
                     "starts_at":    m.get("starts_at"),
                     "date_created": m.get("date_created"),
+                    "title":        m.get("title") or "",
                 })
             if not data.get("has_more"):
                 break
@@ -2887,8 +2905,12 @@ def fetch_meetings_starting_today(today):
     too — it fetches many more raw meetings than the date window contains and
     filters locally. So we MUST re-check starts_at locally per meeting.
 
-    Returns [{lead_id, user_id, starts_at, date_created, title}, ...] where
-    starts_at is confirmed to fall on today PT. Deduped by lead_id.
+    Returns [{meeting_id, lead_id, user_id, starts_at, date_created, title}, ...]
+    where starts_at is confirmed to fall on today PT. Deduped by MEETING id
+    (pagination guard) — NOT by lead_id, because the Scraper Bookings section
+    counts each Next Steps meeting record individually (a lead can legitimately
+    have a 2nd/3rd Next Steps meeting; Lane 2 dashboard methodology). VendHub
+    dedupes lead_ids on its side.
     """
     day_start_pt = datetime(today.year, today.month, today.day, tzinfo=PACIFIC)
     day_end_pt   = day_start_pt + timedelta(days=1)
@@ -2896,7 +2918,7 @@ def fetch_meetings_starting_today(today):
     end_iso      = day_end_pt.astimezone(timezone.utc).isoformat()
 
     results  = []
-    seen     = set()
+    seen     = set()   # meeting activity ids
     raw_seen = 0
     skip     = 0
     try:
@@ -2911,7 +2933,8 @@ def fetch_meetings_starting_today(today):
             raw_seen += len(batch)
             for m in batch:
                 lid = m.get("lead_id")
-                if not lid or lid in seen:
+                mid = m.get("id") or f"{lid}|{m.get('starts_at')}"
+                if not lid or mid in seen:
                     continue
                 # Local starts_at filter — required because Close's API doesn't strictly enforce.
                 starts_at = m.get("starts_at") or m.get("date_start")
@@ -2926,8 +2949,9 @@ def fetch_meetings_starting_today(today):
                 status = (m.get("status") or "").lower()
                 if status.startswith(("canceled", "declined")):
                     continue
-                seen.add(lid)
+                seen.add(mid)
                 results.append({
+                    "meeting_id":   mid,
                     "lead_id":      lid,
                     "user_id":      m.get("user_id"),
                     "starts_at":    starts_at,
@@ -3109,77 +3133,86 @@ def build_eod_data(rolling_data, today):
     )
 
     # ── Scraper Bookings + Show Rate ──────────────────────────────────────────
-    # For each configured scraper setter, count today's leads they booked and
-    # compute the show rate on those specific leads. Show rate = # Yes / # booked
-    # (no reschedule-status exclusion, per user request — kept simple).
-    # We iterate today_lead_ids (already fetched into email_leads) so this adds
-    # zero API calls for the "booked for today" side.
-    # Match on the exact Close dropdown value (full name); display the short name.
-    # Filter to Reactivation Scrapers funnel only — the setter field is only
-    # meaningful there; if it's populated on other funnels (data hygiene issue),
-    # we don't want to inflate scraper counts. Matches the live dashboard's
-    # setter drilldown convention.
+    # Methodology ported from the Lane 2 dashboard (lane2-dashboard-context, 2026-07-23):
+    #
+    #   "For Today" (booked) = /activity/meeting/ records whose title starts with
+    #   a Next Steps prefix AND starts_at falls on today PT. Counted PER MEETING
+    #   (a lead's 2nd/3rd Next Steps meeting each count). Credited to a scraper
+    #   via the LEAD's Reactivation - Setter Name field, filtered to the
+    #   Reactivation Scrapers funnel. This REPLACES the old FSCBD-based logic,
+    #   which only ever saw a lead's first call and missed repeat Next Steps
+    #   meetings entirely.
+    #
+    #   "Shown" = of those booked meetings, ones whose LEAD has First Call Show
+    #   Up = "Yes". Per-lead field (coarse), same caveat as the Lane 2 dashboard.
+    #
+    #   "Set" = Next Steps meetings CREATED today (activity metric), deduped by
+    #   lead (a reschedule creating a 2nd record same-day counts once), same
+    #   setter + funnel attribution.
+    #
+    # Uses a DEDICATED scraper_leads cache with a guaranteed field set — never
+    # reads or writes the shared email_leads dict (see the 2026-07-15 cache-
+    # poisoning incident: partial-field fetches into a shared cache silently
+    # blanked fields for later consumers).
     SCRAPER_FUNNEL = "Reactivation Scrapers"
-    scraper_stats = {close_name: {"booked": 0, "shown": 0}
-                     for close_name, _, _ in SCRAPER_SETTERS}
-    for lid in today_lead_ids:
-        lead = email_leads.get(lid)
+
+    meetings_today = fetch_meetings_starting_today(today)  # shared with VendHub below
+    ns_meetings_today = [m for m in meetings_today if is_next_steps_title(m["title"])]
+
+    meetings_set_today = fetch_meetings_created_today(today)
+    ns_set_today = [m for m in meetings_set_today if is_next_steps_title(m["title"])]
+    # Dedupe "set" by lead — reschedule churn (multiple records created same day
+    # for one lead) counts as one set action.
+    ns_set_lids = list(dict.fromkeys(m["lead_id"] for m in ns_set_today))
+
+    log(f"  🕸 Scraper: {len(ns_meetings_today)} Next Steps meetings today · "
+        f"{len(ns_set_lids)} leads with Next Steps meetings set today")
+
+    # Dedicated lead cache — every lead fetched fresh with exactly these fields.
+    scraper_lead_fields = ",".join([
+        "id",
+        f"custom.{CF_REACT_SETTER}",
+        f"custom.{CF_FUNNEL_DEAL}",
+        f"custom.{CF_SHOW_UP}",
+    ])
+    scraper_leads = {}
+    for lid in dict.fromkeys([m["lead_id"] for m in ns_meetings_today] + ns_set_lids):
+        try:
+            scraper_leads[lid] = close_get(f"lead/{lid}", {"_fields": scraper_lead_fields})
+        except Exception as e:
+            log(f"  ⚠ EOD email: Could not fetch scraper lead {lid}: {e}")
+            scraper_leads[lid] = None
+
+    def _scraper_for_lead(lid):
+        """Return the configured setter close_name for this lead, or None if the
+        lead isn't a Reactivation Scrapers lead credited to a configured setter."""
+        lead = scraper_leads.get(lid)
         if not lead:
-            continue
+            return None
         funnel = (lead.get(f"custom.{CF_FUNNEL_DEAL}") or "").strip()
         if funnel != SCRAPER_FUNNEL:
-            continue
+            return None
         setter = (lead.get(f"custom.{CF_REACT_SETTER}") or "").strip()
-        if setter not in scraper_stats:
+        return setter if setter in {c for c, _, _ in SCRAPER_SETTERS} else None
+
+    scraper_stats     = {close_name: {"booked": 0, "shown": 0}
+                         for close_name, _, _ in SCRAPER_SETTERS}
+    scraper_set_today = {close_name: 0 for close_name, _, _ in SCRAPER_SETTERS}
+
+    # Booked / Shown — per-meeting counting on today's Next Steps meetings.
+    for m in ns_meetings_today:
+        setter = _scraper_for_lead(m["lead_id"])
+        if not setter:
             continue
         scraper_stats[setter]["booked"] += 1
+        lead = scraper_leads.get(m["lead_id"]) or {}
         if str(lead.get(f"custom.{CF_SHOW_UP}", "")).lower() == "yes":
             scraper_stats[setter]["shown"] += 1
 
-    # ── Scraper "set today" — activity metric ────────────────────────────────
-    # Counts meetings each scraper CREATED today (regardless of when the meeting
-    # itself is scheduled). Answers "how many did they book today?" — different
-    # from "booked for today" which is FSCBD == today. Uses the /activity/meeting/
-    # endpoint filtered by date_created. Leads not already in email_leads (their
-    # FSCBD isn't today) get a targeted fetch here — expected small volume
-    # (10–20 leads on a normal scraper day).
-    meetings_set_today = fetch_meetings_created_today(today)
-    scraper_set_today  = {close_name: 0 for close_name, _, _ in SCRAPER_SETTERS}
-
-    # Dedupe by lead_id — a lead with multiple meetings created today (e.g.,
-    # rescheduled by the scraper) still counts as one "set" action.
-    seen_lids_for_set = set()
-    lids_to_check = []
-    for m in meetings_set_today:
-        lid = m["lead_id"]
-        if lid in seen_lids_for_set:
-            continue
-        seen_lids_for_set.add(lid)
-        lids_to_check.append(lid)
-
-    # Fetch any lead not already in email_leads (need funnel + setter fields).
-    fetch_fields = ",".join([
-        "id", f"custom.{CF_FUNNEL_DEAL}", f"custom.{CF_REACT_SETTER}",
-    ])
-    for lid in lids_to_check:
-        if lid in email_leads and email_leads[lid] is not None:
-            continue  # already have this lead
-        try:
-            email_leads[lid] = close_get(f"lead/{lid}", {"_fields": fetch_fields})
-        except Exception as e:
-            log(f"  ⚠ EOD email: Could not fetch scraper-set lead {lid}: {e}")
-            email_leads[lid] = None
-
-    # Aggregate — same funnel + setter filter as "booked for today".
-    for lid in lids_to_check:
-        lead = email_leads.get(lid)
-        if not lead:
-            continue
-        funnel = (lead.get(f"custom.{CF_FUNNEL_DEAL}") or "").strip()
-        if funnel != SCRAPER_FUNNEL:
-            continue
-        setter = (lead.get(f"custom.{CF_REACT_SETTER}") or "").strip()
-        if setter not in scraper_set_today:
+    # Set — per-lead counting on Next Steps meetings created today.
+    for lid in ns_set_lids:
+        setter = _scraper_for_lead(lid)
+        if not setter:
             continue
         scraper_set_today[setter] += 1
 
@@ -3191,7 +3224,7 @@ def build_eod_data(rolling_data, today):
         scraper_lines.append({
             "name":   display_name,
             "goal":   goal,
-            "set":    scraper_set_today[close_name],  # NEW: activity metric
+            "set":    scraper_set_today[close_name],
             "booked": booked,
             "shown":  shown,
             "rate":   rate,  # float or None
@@ -3213,8 +3246,7 @@ def build_eod_data(rolling_data, today):
         m["lead_id"] for m in rolling_data.get("non_new_meetings", [])
         if m.get("meeting_date") == today and m.get("lead_id")
     ]
-    meetings_today      = fetch_meetings_starting_today(today)
-    meetings_today_lids = [m["lead_id"] for m in meetings_today]
+    meetings_today_lids = list(dict.fromkeys(m["lead_id"] for m in meetings_today))  # reuses scraper section's fetch
 
     vh_candidate_lids = list(dict.fromkeys(
         today_lead_ids + non_new_today_lids + meetings_today_lids
